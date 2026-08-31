@@ -1,0 +1,22 @@
+# Normalize line endings to LF in the repo. CI runs on Linux and gofmt expects LF;
+# this keeps Windows checkouts from introducing CRLF that would fail `gofmt -l`.
+* text=auto eol=lf
+
+# Explicit LF for the toolchain-sensitive files.
+*.go   text eol=lf
+*.mod  text eol=lf
+*.sum  text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.sql  text eol=lf
+*.sh   text eol=lf
+
+# Windows scripts stay CRLF.
+*.ps1  text eol=crlf
+
+# Binaries: never touch.
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
