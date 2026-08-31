@@ -34,6 +34,49 @@ I re-examined PRD/TRD cold. Genuine problems and upgrades, in priority order. **
 
 ---
 
+## A2. Plan amendments — de-scope & managed swaps (2026-08-31)
+
+Reviewed the plan after building through Task 1.5. Several early choices are heavier
+than the current stage needs — the same shape as "we assumed Docker, but managed cloud
+is simpler and free." These supersede the earlier text where they conflict. The
+architecture (two planes, deterministic engine, signed receipts, shadow-first) is
+unchanged and sound; these are **deferrals and managed-infra swaps**, not redesigns.
+
+1. **Managed serverless stores instead of self-hosted PG/Redis — dev AND prod.**
+   Use **Neon** (serverless Postgres) + **Upstash** (serverless Redis), free tier, zero
+   ops, same `DATABASE_URL`/`REDIS_URL` the code already reads. Supersedes "run PG15 +
+   Redis7 containers on Railway/Fly" in Task 6.1 and the local-Docker assumption.
+   Docker stays only as (a) an optional local convenience and (b) the CI compose-smoke
+   job. See `docs/running-locally.md`.
+
+2. **Do NOT stand up a separate `policy-svc` (TypeScript/Node) yet.** A second
+   runtime+deploy before a dashboard or TS-SDK exists is a premature boundary. For MVP,
+   load policy as **JSON files / GitOps** (A#8) directly in `authorize-svc`, or add
+   thin control-plane endpoints to the Go service. Introduce the separate TS policy-svc
+   only when the dashboard lands (Phase 5). Affects Phase 2 sequencing.
+
+3. **One SDK first, not two.** Build the SDK matching the first design partner's stack
+   (Phase 4); generate the second from the same contract later.
+
+4. **Dashboard: audit-viewer + "verify signature" slice first** (Task 5.1). A
+   shadow-mode partner needs to read the audit and verify receipts, not a policy-
+   authoring GUI (they author via JSON/GitOps). Defer the authoring UI and Clerk auth.
+
+5. **Task 1.6: defer field-level encryption + per-tier retention.** Build the audit
+   write as **append-only + tamper-evident hash chain + async (in-proc) write** with an
+   in-memory store seam for hermetic CI tests. Field-level encryption of
+   amount/target/counterparty and per-tier retention become a documented post-MVP TODO
+   — they add real complexity to the *first* audit write without proving its value.
+
+6. **Prod deploy (Task 6.1) simplifies accordingly:** app on a single host/platform
+   (Railway/Fly/Render — one service), stores on Neon+Upstash, dashboard on Vercel when
+   it exists. No self-managed stateful infra.
+
+Unchanged and still required: Ed25519 decisions (A#1), authorize/capture (A#2),
+determinism, the tamper-evident audit chain itself, shadow-first rollout.
+
+---
+
 ## Phase map
 
 | Phase | Goal | Exit criteria |
@@ -218,6 +261,10 @@ fails verification; the verify util works independently of the signing service.
 ```
 
 ### Task 1.6 — Async audit write + tamper-evident record
+> **AMENDED (A2#5):** for MVP, defer **field-level encryption** and **per-tier
+> retention** — build append-only + hash-chain + async write first, with an in-memory
+> store seam for hermetic CI tests (same pattern as auth/ratelimit). Encryption +
+> retention are a documented post-MVP TODO.
 ```
 Repo: C:\Users\pokka\trust infra. Read TRD.md §12–13, §14 (async audit), ROADMAP A#10 (PII).
 authorize-svc + Postgres.

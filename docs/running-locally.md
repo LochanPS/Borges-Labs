@@ -1,65 +1,83 @@
-# Running Locally
+# Running the service
 
-## Prerequisites
-- Docker + Docker Compose (for Postgres 15 + Redis 7, and the containerized service)
-- Go 1.23+ (only if running `authorize-svc` outside Docker)
-- `make` optional — Windows users can use `./tasks.ps1 <target>` instead
+The tests need **nothing** — `go test ./...` runs fully in memory. You only need
+Postgres + Redis to run the **live** service (manual curl, a demo, real end-to-end).
 
-## One command
-From the repo root:
+There are two ways to get those stores. **Cloud (managed) is the recommended path** —
+no install, free tier, and it's what production uses too. Docker is an optional local
+alternative.
+
+## Option A — Cloud stores (recommended)
+
+1. **Postgres:** create a free database at [Neon](https://neon.tech) → copy its
+   connection string (looks like `postgres://user:pass@…neon.tech/db?sslmode=require`).
+2. **Redis:** create a free database at [Upstash](https://upstash.com) → copy its
+   `rediss://…` URL (TLS).
+3. Run the service on your machine, pointing at them:
+
+```bash
+cd services/authorize-svc
+DATABASE_URL="postgres://…neon.tech/db?sslmode=require" \
+REDIS_URL="rediss://…upstash.io:6379" \
+go run ./cmd/authorize-svc
+```
+
+That's it — no Docker, no WSL, nothing to install beyond Go. The service connects and
+serves `/health` on `:8080`.
+
+Apply the key migration once (any `psql`, or Neon's SQL console):
+
+```bash
+psql "$DATABASE_URL" -f deploy/migrations/0001_api_keys.sql
+```
+
+## Option B — Docker for local stores (optional)
+
+If you prefer everything local and already have Docker:
+
+```bash
+cd deploy && docker compose up -d postgres redis   # just the stores
+cd .. && make run                                    # service on the host
+```
+
+Or the whole stack (stores + service) in containers:
 
 ```bash
 make up
 ```
 
-This runs `docker compose -f deploy/docker-compose.yml up -d --build`, which:
-1. Starts **Postgres 15** and **Redis 7** with healthchecks.
-2. Builds and starts **authorize-svc**, which waits for both to be healthy,
-   connects to each, and serves `/health`.
+Docker's WSL disk can grow over time; if you go this route, cap the disk image in
+Docker Desktop settings. (This is exactly why cloud is the easier default.)
 
-Check it:
+## Health check
 
 ```bash
 curl -s http://localhost:8080/health
 ```
 
-Expected: HTTP 200 with JSON like:
+HTTP 200 with `"status":"ok"` and `checks.postgres/redis = "ok"`. If a store is down
+you get **503** + `"status":"degraded"` naming the failing check — the service never
+reports healthy while blind to a store.
 
-```json
-{
-  "status": "ok",
-  "build": { "version": "dev", "commit": "none", "date": "unknown" },
-  "checks": { "postgres": "ok", "redis": "ok" },
-  "time": "2026-08-28T00:00:00Z"
-}
-```
+## Configuration
 
-If a dependency is down, `/health` returns **503** with `"status": "degraded"`
-and the failing check named — the service never reports healthy while blind to a
-store.
+| Env | Purpose | Default |
+|---|---|---|
+| `DATABASE_URL` | Postgres DSN | local docker |
+| `REDIS_URL` | Redis URL (`rediss://` for TLS/Upstash) | local docker |
+| `AUTHZ_ADDR` | listen address | `:8080` |
+| `AUTHZ_SIGNING_PRIVATE_KEY` | base64/hex Ed25519 seed; empty = generate a dev key at boot | *(empty)* |
+| `LOG_LEVEL` | debug/info/warn/error | `info` |
 
-## Running the service on the host (stores in Docker)
-Start only the stores, then run the Go binary locally:
+Auth, rate-limit, and signing knobs: see `deploy/.env.example`,
+`docs/request-authentication.md`, `docs/rate-limiting.md`.
 
-```bash
-cd deploy && docker compose up -d postgres redis
-cd .. && make run
-```
-
-Defaults target `localhost:5432` / `localhost:6379`; override with
-`DATABASE_URL`, `REDIS_URL`, `AUTHZ_ADDR`, `LOG_LEVEL`.
-
-## Tests
+## Tests (no infra)
 
 ```bash
-make test
+cd services/authorize-svc && go test ./...
 ```
 
-Health handler tests inject fake dependency checks, so they pass without real
-Postgres/Redis. The `docker compose` smoke test in CI covers real connectivity.
-
-## Tear down
-
-```bash
-make down          # keep volumes
-```
+All unit + integration tests use in-memory fakes for Postgres/Redis, so they pass with
+nothing installed. CI additionally runs a `docker compose` smoke test on Linux to prove
+real connectivity.
