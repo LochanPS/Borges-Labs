@@ -106,12 +106,52 @@ type PredicateResult struct {
 }
 
 // Combine folds predicate results into a single Verdict per the algebra
-// documented on this package.
-//
-// Phase-1 STUB: returns the zero Verdict so the reference tests fail (TDD red).
-// Replace the body with the real implementation; do not change the signature or
-// the documented behavior without updating verdict_test.go.
+// documented on this package. Pure, total, and order-independent.
 func Combine(results []PredicateResult) Verdict {
-	// TODO(phase-1): implement the algebra documented in the package comment.
-	return Verdict("")
+	// Deny-by-default: with no predicate granting anything, there is no authority
+	// to approve (TRD §6/§20).
+	if len(results) == 0 {
+		return Deny
+	}
+
+	sawFlag := false
+	for _, r := range results {
+		switch effectiveOutcome(r) {
+		case Denied:
+			// Hard deny short-circuits: any deny dominates every other outcome.
+			return Deny
+		case Flagged:
+			sawFlag = true
+		case Satisfied:
+			// Contributes nothing on its own; approval requires the absence of any
+			// deny or flag across the whole set.
+		}
+	}
+
+	if sawFlag {
+		return Review
+	}
+	return Approve
+}
+
+// effectiveOutcome resolves a single result into one of Satisfied/Denied/Flagged.
+// An Unavailable predicate is resolved through its declared FailMode; every other
+// outcome passes through unchanged. The only path from Unavailable to Satisfied is
+// an explicit customer-declared FailOpen — the governing invariant (TRD §21).
+func effectiveOutcome(r PredicateResult) Outcome {
+	if r.Outcome != Unavailable {
+		return r.Outcome
+	}
+	switch r.FailMode {
+	case FailClosedDeny:
+		return Denied
+	case FailOpen:
+		return Satisfied
+	case FailClosedReview:
+		return Flagged
+	default:
+		// Unspecified (or any unknown) fail mode: safe default, never a fabricated
+		// satisfy for a predicate that did not complete.
+		return Flagged
+	}
 }
