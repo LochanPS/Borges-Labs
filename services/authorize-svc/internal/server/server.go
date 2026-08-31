@@ -52,6 +52,16 @@ type Server struct {
 	limiter ratelimit.Limiter
 	tiers   ratelimit.TierTable
 	checks  []Check
+	// keysJWKS, when set, provides the JWKS served at GET /v1/keys/public. nil means
+	// signing keys are not configured and the endpoint reports 503.
+	keysJWKS func() any
+}
+
+// WithKeys wires the public-key set served at GET /v1/keys/public (Task 1.5). fn
+// returns a JSON-serializable JWKS document (e.g. signing.Keyring.JWKS()).
+func (s *Server) WithKeys(fn func() any) *Server {
+	s.keysJWKS = fn
+	return s
 }
 
 // New constructs a Server. Pass the Authorizer seam (decision engine), the
@@ -75,6 +85,7 @@ func (s *Server) Handler() http.Handler {
 	authorize := s.authenticate(s.rateLimit(http.HandlerFunc(s.handleAuthorize)))
 	mux.HandleFunc("/v1/authorize", s.method(http.MethodPost, authorize.ServeHTTP))
 	mux.HandleFunc("/v1/decisions/{id}", s.method(http.MethodGet, s.handleGetDecision))
+	mux.HandleFunc("/v1/keys/public", s.method(http.MethodGet, s.handleKeysPublic))
 	mux.HandleFunc("/v1/health", s.method(http.MethodGet, s.handleHealth))
 	// Convenience alias for infra probes that hit the bare path.
 	mux.HandleFunc("/health", s.method(http.MethodGet, s.handleHealth))

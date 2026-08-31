@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/trust-infra/authorize-svc/internal/signing"
 	"github.com/trust-infra/authorize-svc/internal/ulid"
 	contractsv1 "github.com/trust-infra/contracts/gen/go/contractsv1"
 )
@@ -26,11 +27,20 @@ type Policy struct {
 type Engine struct {
 	Policy       Policy
 	SigningKeyID string
+	// Signer, when set, applies a real Ed25519 signature (Task 1.5); when nil the
+	// decision carries the placeholder signature.
+	Signer *signing.Signer
 }
 
 // NewEngine constructs an Engine over a policy.
 func NewEngine(policy Policy, signingKeyID string) Engine {
 	return Engine{Policy: policy, SigningKeyID: signingKeyID}
+}
+
+// WithSigner returns a copy of the engine that signs decisions with s.
+func (e Engine) WithSigner(s *signing.Signer) Engine {
+	e.Signer = s
+	return e
 }
 
 // Authorize implements the server's Authorizer seam: it evaluates the applicable
@@ -83,9 +93,14 @@ func (e Engine) Authorize(_ context.Context, req contractsv1.AuthorizeRequest) (
 		Signature: contractsv1.Signature{
 			Algorithm:        "Ed25519",
 			KeyID:            e.SigningKeyID,
-			Value:            stubSignatureValue, // TODO(Task 1.5): real Ed25519 signature
+			Value:            stubSignatureValue, // placeholder unless a Signer is set
 			Canonicalization: signatureCanonicalization,
 		},
+	}
+	if e.Signer != nil {
+		if err := e.Signer.Sign(&dec); err != nil {
+			return contractsv1.Decision{}, err
+		}
 	}
 	dec.LatencyMs = int(time.Since(start).Milliseconds())
 	return dec, nil

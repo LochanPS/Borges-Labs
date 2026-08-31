@@ -6,7 +6,10 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -19,8 +22,24 @@ import (
 	"github.com/trust-infra/authorize-svc/internal/logging"
 	"github.com/trust-infra/authorize-svc/internal/ratelimit"
 	"github.com/trust-infra/authorize-svc/internal/server"
+	"github.com/trust-infra/authorize-svc/internal/signing"
 	"github.com/trust-infra/authorize-svc/internal/store"
 )
+
+// decodeSeed decodes a 32-byte Ed25519 seed from base64 (std or url) or hex.
+func decodeSeed(s string) ([]byte, error) {
+	for _, dec := range []func(string) ([]byte, error){
+		base64.StdEncoding.DecodeString,
+		base64.RawStdEncoding.DecodeString,
+		base64.RawURLEncoding.DecodeString,
+		hex.DecodeString,
+	} {
+		if b, err := dec(s); err == nil && len(b) == 32 {
+			return b, nil
+		}
+	}
+	return nil, fmt.Errorf("AUTHZ_SIGNING_PRIVATE_KEY must be a 32-byte Ed25519 seed in base64 or hex")
+}
 
 // Build info, injected at build time via -ldflags (see Makefile).
 var (
@@ -57,11 +76,41 @@ func main() {
 	defer func() { _ = rds.Close() }()
 	log.Info("connected", "store", "redis")
 
-	// Phase-0 authorizer seam: hardcoded APPROVE. The real engine implements the
-	// same interface next; swapping it is a one-line change here.
+	// Decision signing (Task 1.5): load the Ed25519 signing key, or generate a dev key
+	// at boot. The public half is published at /v1/keys/public so any third party can
+	// verify decisions. Production supplies the seed from the secret manager.
+	keyring := signing.NewKeyring()
+	if cfg.SigningPrivateKey != "" {
+		seed, derr := decodeSeed(cfg.SigningPrivateKey)
+		if derr != nil {
+			log.Error("signing key decode failed", "err", derr)
+			os.Exit(1)
+		}
+		if err := keyring.SetActive(cfg.SigningKeyID, seed); err != nil {
+			log.Error("signing key load failed", "err", err)
+			os.Exit(1)
+		}
+		log.Info("signing key loaded", "key_id", cfg.SigningKeyID)
+	} else {
+		id, err := keyring.GenerateActive()
+		if err != nil {
+			log.Error("signing key generate failed", "err", err)
+			os.Exit(1)
+		}
+		log.Warn("generated an ephemeral signing key (dev only; decisions won't verify across restarts)", "key_id", id)
+	}
+	signer, err := keyring.Signer()
+	if err != nil {
+		log.Error("signer unavailable", "err", err)
+		os.Exit(1)
+	}
+
+	// Phase-0 authorizer seam: hardcoded APPROVE, now REALLY signed. The real engine
+	// implements the same interface next; swapping it is a one-line change here.
 	authz := engine.Stub{
 		PolicyVersionHash: cfg.PolicyVersionHash,
-		SigningKeyID:      cfg.SigningKeyID,
+		SigningKeyID:      signer.KeyID(),
+		Signer:            signer,
 	}
 
 	// Request authentication (TRD §11): key records from Postgres (source of truth)
@@ -85,7 +134,7 @@ func main() {
 	srv := server.New(log, build, authz, authn, limiter, tiers,
 		server.Check{Name: "postgres", Ping: pg.Ping},
 		server.Check{Name: "redis", Ping: rds.Ping},
-	)
+	).WithKeys(func() any { return keyring.JWKS() })
 
 	httpSrv := &http.Server{
 		Addr:              cfg.Addr,

@@ -25,8 +25,12 @@ type Config struct {
 	// baked into a handler.
 	PolicyVersionHash string
 	// SigningKeyID names the Ed25519 key a decision is signed under (TRD §11).
-	// Stub value until KMS-backed signing lands.
 	SigningKeyID string
+	// SigningPrivateKey is the base64 (std or url) 32-byte Ed25519 seed the decision
+	// signer loads (Task 1.5). Empty in dev => a key is generated at boot and its
+	// public half is published at /v1/keys/public. Production supplies this from the
+	// secret manager; KMS/HSM custody is a Prod TODO.
+	SigningPrivateKey string
 
 	// HMACMaxSkew is the largest allowed clock difference between a request's
 	// signed timestamp and server time (TRD §11 request signing). Bounds replay.
@@ -48,7 +52,8 @@ func Load() Config {
 		LogLevel:          env("LOG_LEVEL", "info"),
 		ShutdownTimeout:   envDuration("AUTHZ_SHUTDOWN_TIMEOUT", 10*time.Second),
 		PolicyVersionHash: env("AUTHZ_POLICY_VERSION", "pol_stub_0000000000000000000000000000000000000000000000000000000000000000"),
-		SigningKeyID:      env("AUTHZ_SIGNING_KEY_ID", "azn-sign-stub"),
+		SigningKeyID:      env("AUTHZ_SIGNING_KEY_ID", "azn-sign-dev"),
+		SigningPrivateKey: env("AUTHZ_SIGNING_PRIVATE_KEY", ""),
 		HMACMaxSkew:       envDuration("AUTHZ_HMAC_MAX_SKEW", 5*time.Minute),
 		NonceTTL:          envDuration("AUTHZ_NONCE_TTL", 10*time.Minute),
 		KeyCacheTTL:       envDuration("AUTHZ_KEY_CACHE_TTL", 5*time.Minute),

@@ -13,6 +13,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/trust-infra/authorize-svc/internal/signing"
 	"github.com/trust-infra/authorize-svc/internal/ulid"
 	contractsv1 "github.com/trust-infra/contracts/gen/go/contractsv1"
 )
@@ -33,6 +34,9 @@ type Stub struct {
 	PolicyVersionHash string
 	// SigningKeyID names the key the placeholder signature is attributed to.
 	SigningKeyID string
+	// Signer, when set, applies a real Ed25519 signature (Task 1.5); when nil the
+	// decision carries the placeholder signature below.
+	Signer *signing.Signer
 }
 
 // Authorize returns a hardcoded, schema-valid APPROVE for the given request.
@@ -66,6 +70,11 @@ func (s Stub) Authorize(_ context.Context, req contractsv1.AuthorizeRequest) (co
 			Value:            stubSignatureValue,
 			Canonicalization: signatureCanonicalization,
 		},
+	}
+	if s.Signer != nil {
+		if err := s.Signer.Sign(&dec); err != nil {
+			return contractsv1.Decision{}, err
+		}
 	}
 	dec.LatencyMs = int(time.Since(start).Milliseconds())
 	return dec, nil
