@@ -1,0 +1,29 @@
+{
+  "agent_id": "procurement-agent-v2",
+  "action": "payment.create",
+  "amount": "5000.00",
+  "currency": "USD",
+  "target": {
+    "type": "vendor",
+    "id": "acme-supplies"
+  },
+  "jurisdiction": "US",
+  "context": {
+    "invoice_id": "inv_88"
+  },
+  "idempotency_key": "idem_01HXYZ8K3M9QF0R7S2T4V6W8XA",
+  "evaluated_at": "2026-08-27T10:32:11Z",
+  "counter_snapshot": {
+    "as_of": "2026-08-27T10:32:10Z",
+    "counters": [
+      {
+        "id": "monthly_budget",
+        "window": "month",
+        "window_key": "2026-08",
+        "spend_to_date": "48200.00",
+        "limit": "50000.00",
+        "currency": "USD"
+      }
+    ]
+  }
+}

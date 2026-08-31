@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.trust-infra.dev/v1/error.schema.json",
+  "title": "Error v1 (RFC 7807)",
+  "description": "Problem Details for HTTP APIs (RFC 7807). Every non-2xx response uses this shape with Content-Type application/problem+json. Never leaks stack traces or secrets (TRD §11, §20).",
+  "type": "object",
+  "required": ["type", "title", "status"],
+  "properties": {
+    "type": {
+      "type": "string",
+      "format": "uri-reference",
+      "description": "A URI reference identifying the problem type. Dereferenceable to human docs. 'about:blank' when there is no specific type.",
+      "default": "about:blank",
+      "examples": ["https://contracts.trust-infra.dev/v1/errors/invalid-signature"]
+    },
+    "title": {
+      "type": "string",
+      "description": "Short, human-readable summary of the problem type. Stable for a given `type`.",
+      "examples": ["Invalid request signature"]
+    },
+    "status": {
+      "type": "integer",
+      "description": "HTTP status code, duplicated here for convenience.",
+      "minimum": 100,
+      "maximum": 599,
+      "examples": [401]
+    },
+    "detail": {
+      "type": "string",
+      "description": "Human-readable explanation specific to this occurrence. Safe to show a developer; contains no secrets.",
+      "examples": ["The provided X-Signature did not match the computed HMAC over the canonical payload."]
+    },
+    "instance": {
+      "type": "string",
+      "format": "uri-reference",
+      "description": "URI reference identifying this specific occurrence (e.g. a request id path).",
+      "examples": ["/v1/authorize#req_01HXYZ8K3M9QF0R7S2T4V6W8XA"]
+    },
+    "code": {
+      "type": "string",
+      "description": "Extension: stable machine-readable error code for SDKs to switch on (independent of prose).",
+      "examples": ["invalid_signature", "replay_detected", "rate_limited", "validation_failed"]
+    },
+    "errors": {
+      "type": "array",
+      "description": "Extension: field-level validation problems, present when code = validation_failed.",
+      "items": {
+        "type": "object",
+        "required": ["pointer", "detail"],
+        "properties": {
+          "pointer": {
+            "type": "string",
+            "description": "JSON Pointer to the offending field in the request body.",
+            "examples": ["/amount", "/target/id"]
+          },
+          "detail": {
+            "type": "string",
+            "description": "What is wrong with that field.",
+            "examples": ["must match ^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$"]
+          }
+        }
+      }
+    }
+  }
+}

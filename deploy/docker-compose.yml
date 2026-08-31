@@ -1,0 +1,58 @@
+# Local dev stack: Postgres 15 + Redis 7, plus the authorize-svc decision plane.
+#
+#   cd deploy && docker compose up        # or:  make up   (from repo root)
+#
+# Postgres 15 and Redis 7 are pinned per TRD §13. authorize-svc waits for both
+# to be healthy, then boots and serves /health on http://localhost:8080/health.
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-authz}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-authz}
+      POSTGRES_DB: ${POSTGRES_DB:-authz}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-authz} -d ${POSTGRES_DB:-authz}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  authorize-svc:
+    build:
+      # Repo root, so the build can see both the service module and the
+      # in-repo contracts module it binds via a local `replace`.
+      context: ..
+      dockerfile: services/authorize-svc/Dockerfile
+    environment:
+      AUTHZ_ADDR: ":8080"
+      DATABASE_URL: "postgres://${POSTGRES_USER:-authz}:${POSTGRES_PASSWORD:-authz}@postgres:5432/${POSTGRES_DB:-authz}?sslmode=disable"
+      REDIS_URL: "redis://redis:6379/0"
+      LOG_LEVEL: "info"
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  redisdata:

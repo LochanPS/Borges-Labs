@@ -1,0 +1,27 @@
+# Go
+services/authorize-svc/bin/
+*.exe
+*.test
+*.out
+
+# Node
+node_modules/
+dist/
+.next/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Env / secrets
+.env
+deploy/.env
+*.local
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/

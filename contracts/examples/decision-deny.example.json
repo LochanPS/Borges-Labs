@@ -1,0 +1,40 @@
+{
+  "decision_id": "01HXYZ9M4N0RG1S8T3V5W7X9YB",
+  "verdict": "DENY",
+  "policy_version_hash": "pol_v3_9f2a1c7e4b5d6a8f0c1e2d3b4a5f6e7d",
+  "explanation": {
+    "summary": "Transaction exceeds the monthly budget for procurement-agent.",
+    "matched_rules": [
+      {
+        "rule_id": "per_txn_5k",
+        "type": "per_transaction_limit",
+        "result": "SATISFIED",
+        "detail": "amount=5000.00 <= per_transaction_limit=5000.00 USD",
+        "evidence": { "amount": "5000.00", "limit": "5000.00", "currency": "USD" }
+      },
+      {
+        "rule_id": "vendor_allowlist",
+        "type": "vendor_allowlist",
+        "result": "SATISFIED",
+        "detail": "target vendor 'acme-supplies' is on the allowlist",
+        "evidence": { "target_id": "acme-supplies", "list": "allow" }
+      },
+      {
+        "rule_id": "monthly_budget",
+        "type": "rolling_budget",
+        "result": "DENIED",
+        "detail": "spend_to_date=48200.00 + amount=5000.00 = 53200.00 > limit=50000.00 USD (window=2026-08)",
+        "evidence": { "window": "2026-08", "spend_to_date": "48200.00", "amount": "5000.00", "limit": "50000.00", "currency": "USD" }
+      }
+    ]
+  },
+  "obligations": [],
+  "latency_ms": 6,
+  "evaluated_at": "2026-08-27T10:32:11Z",
+  "signature": {
+    "algorithm": "Ed25519",
+    "key_id": "azn-sign-2026-08",
+    "value": "MEQCIF_examplE-base64url-ed25519-signature-over-canonical-deny-decision-BBBB",
+    "canonicalization": "ti-decision-canon/1"
+  }
+}

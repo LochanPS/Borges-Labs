@@ -1,0 +1,259 @@
+package server
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"runtime"
+	"testing"
+
+	"github.com/santhosh-tekuri/jsonschema/v5"
+
+	"github.com/trust-infra/authorize-svc/internal/engine"
+	contractsv1 "github.com/trust-infra/contracts/gen/go/contractsv1"
+)
+
+// testAuthorizer is the engine stub with test-fixed policy/key values, exercised
+// through the real HTTP surface.
+type testAuthorizer struct{}
+
+func (testAuthorizer) Authorize(ctx context.Context, req contractsv1.AuthorizeRequest) (contractsv1.Decision, error) {
+	return engine.Stub{
+		PolicyVersionHash: "pol_test_0000000000000000000000000000000000000000000000000000000000000000",
+		SigningKeyID:      "azn-sign-test",
+	}.Authorize(ctx, req)
+}
+
+// --- contract schema loading -------------------------------------------------
+
+const (
+	decisionSchemaID = "https://contracts.trust-infra.dev/v1/decision.schema.json"
+	errorSchemaID    = "https://contracts.trust-infra.dev/v1/error.schema.json"
+)
+
+// schemaFile resolves a frozen schema by name relative to this test file, so the
+// test validates against the real /contracts, not a copy.
+func schemaFile(name string) string {
+	_, thisFile, _, _ := runtime.Caller(0)
+	dir := filepath.Dir(thisFile) // .../services/authorize-svc/internal/server
+	return filepath.Join(dir, "..", "..", "..", "..", "contracts", "schemas", name)
+}
+
+// compileContract builds a validator for the schema identified by rootID, with all
+// cross-file $refs resolved from the frozen schema set (registered by their $id).
+func compileContract(t *testing.T, rootID string) *jsonschema.Schema {
+	t.Helper()
+	c := jsonschema.NewCompiler()
+	for _, name := range []string{
+		"common.schema.json",
+		"decision.schema.json",
+		"error.schema.json",
+		"authorize-request.schema.json",
+	} {
+		b, err := os.ReadFile(schemaFile(name))
+		if err != nil {
+			t.Fatalf("read schema %s: %v", name, err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(b, &doc); err != nil {
+			t.Fatalf("parse schema %s: %v", name, err)
+		}
+		id, _ := doc["$id"].(string)
+		if id == "" {
+			t.Fatalf("schema %s has no $id", name)
+		}
+		if err := c.AddResource(id, bytes.NewReader(b)); err != nil {
+			t.Fatalf("add schema %s: %v", name, err)
+		}
+	}
+	sch, err := c.Compile(rootID)
+	if err != nil {
+		t.Fatalf("compile %s: %v", rootID, err)
+	}
+	return sch
+}
+
+// validateAgainst decodes body as JSON and validates it against the schema.
+func validateAgainst(t *testing.T, sch *jsonschema.Schema, body []byte) {
+	t.Helper()
+	var v any
+	if err := json.Unmarshal(body, &v); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if err := sch.Validate(v); err != nil {
+		t.Fatalf("body does not conform to contract:\n%v\nbody: %s", err, body)
+	}
+}
+
+// --- integration tests against a running service -----------------------------
+
+func newTestHTTPServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := testServer(
+		Check{Name: "postgres", Ping: func(context.Context) error { return nil }},
+		Check{Name: "redis", Ping: func(context.Context) error { return nil }},
+	)
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+var validAuthorizeBody = []byte(`{
+  "agent_id": "procurement-agent-v2",
+  "action": "payment.create",
+  "amount": "5000.00",
+  "currency": "USD",
+  "target": { "type": "vendor", "id": "acme-supplies" },
+  "jurisdiction": "US",
+  "context": { "invoice_id": "inv_88" },
+  "idempotency_key": "idem_01HXYZ8K3M9QF0R7S2T4V6W8XA"
+}`)
+
+func TestAuthorize_ApproveConformsToContract(t *testing.T) {
+	h := newAuthHarness(t)
+	decisionSchema := compileContract(t, decisionSchemaID)
+
+	req := h.signedRequest(t, http.MethodPost, "/v1/authorize", validAuthorizeBody, h.active)
+	resp, body := do(t, req)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", resp.StatusCode, body)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
+		t.Errorf("content-type = %q, want application/json", ct)
+	}
+	if resp.Header.Get("X-Request-Id") == "" {
+		t.Error("missing X-Request-Id header")
+	}
+
+	// Response is a schema-valid APPROVE.
+	validateAgainst(t, decisionSchema, body)
+
+	var dec contractsv1.Decision
+	if err := json.Unmarshal(body, &dec); err != nil {
+		t.Fatalf("decode decision: %v", err)
+	}
+	if dec.Verdict != contractsv1.VerdictApprove {
+		t.Errorf("verdict = %q, want APPROVE", dec.Verdict)
+	}
+	if !reULID.MatchString(dec.DecisionID) {
+		t.Errorf("decision_id %q is not a ULID", dec.DecisionID)
+	}
+	if got := resp.Header.Get("X-Decision-Id"); got != dec.DecisionID {
+		t.Errorf("X-Decision-Id = %q, want %q", got, dec.DecisionID)
+	}
+	// evaluated_at is stamped by the service even though the client did not set it.
+	if dec.EvaluatedAt == "" {
+		t.Error("evaluated_at was not stamped")
+	}
+}
+
+func TestAuthorize_ValidationErrorIsRFC7807(t *testing.T) {
+	h := newAuthHarness(t)
+	errorSchema := compileContract(t, errorSchemaID)
+
+	// Missing required fields + bad amount/currency. Signed by a valid key so the
+	// request clears auth and reaches validation.
+	bad := []byte(`{"agent_id":"","action":"pay","amount":"12,00","currency":"usd","target":{"type":"vendor","id":"x"},"idempotency_key":"short"}`)
+	resp, body := do(t, h.signedRequest(t, http.MethodPost, "/v1/authorize", bad, h.active))
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", resp.StatusCode, body)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/problem+json" {
+		t.Errorf("content-type = %q, want application/problem+json", ct)
+	}
+	validateAgainst(t, errorSchema, body)
+
+	var p contractsv1.Problem
+	if err := json.Unmarshal(body, &p); err != nil {
+		t.Fatalf("decode problem: %v", err)
+	}
+	if p.Code != codeValidationFailed {
+		t.Errorf("code = %q, want %q", p.Code, codeValidationFailed)
+	}
+	if p.Status != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", p.Status)
+	}
+	if len(p.Errors) == 0 {
+		t.Error("expected field-level errors[]")
+	}
+}
+
+func TestAuthorize_MalformedJSON(t *testing.T) {
+	h := newAuthHarness(t)
+	// The signature covers the raw body bytes, so malformed JSON still authenticates;
+	// the handler then rejects it as a 400. (Auth is about the bytes, not the shape.)
+	resp, _ := do(t, h.signedRequest(t, http.MethodPost, "/v1/authorize", []byte(`{not json`), h.active))
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/problem+json" {
+		t.Errorf("content-type = %q, want application/problem+json", ct)
+	}
+}
+
+func TestAuthorize_UnknownFieldRejected(t *testing.T) {
+	h := newAuthHarness(t)
+	// additionalProperties:false — an unknown field is a 400.
+	body := []byte(`{"agent_id":"a","action":"payment.create","amount":"1.00","currency":"USD","target":{"type":"vendor","id":"x"},"idempotency_key":"idem_1234","surprise":true}`)
+	resp, _ := do(t, h.signedRequest(t, http.MethodPost, "/v1/authorize", body, h.active))
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestAuthorize_MethodNotAllowed(t *testing.T) {
+	ts := newTestHTTPServer(t)
+	resp, err := http.Get(ts.URL + "/v1/authorize")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 405", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Allow"); got != http.MethodPost {
+		t.Errorf("Allow = %q, want POST", got)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/problem+json" {
+		t.Errorf("content-type = %q, want application/problem+json", ct)
+	}
+}
+
+func TestGetDecision_StubNotFound(t *testing.T) {
+	ts := newTestHTTPServer(t)
+	errorSchema := compileContract(t, errorSchemaID)
+
+	resp, err := http.Get(ts.URL + "/v1/decisions/01HXYZ8K3M9QF0R7S2T4V6W8XA")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body: %s", resp.StatusCode, body)
+	}
+	validateAgainst(t, errorSchema, body)
+}
+
+func TestUnknownPath_NotFound(t *testing.T) {
+	ts := newTestHTTPServer(t)
+	resp, err := http.Get(ts.URL + "/v1/nope")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/problem+json" {
+		t.Errorf("content-type = %q, want application/problem+json", ct)
+	}
+}

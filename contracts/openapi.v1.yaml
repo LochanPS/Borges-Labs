@@ -1,0 +1,343 @@
+openapi: 3.1.0
+info:
+  title: AI Transaction Authorization Infrastructure API
+  version: "1.0.0"
+  summary: Deterministic APPROVE/DENY/REVIEW for AI-initiated transactions, before they reach the payment provider.
+  description: |
+    The decision-plane HTTP surface. A caller POSTs a transaction to `/v1/authorize`
+    **before** invoking its payment provider and receives a deterministic, explainable,
+    Ed25519-signed decision. **This service never moves, holds, or settles money.**
+
+    ## Two distinct signatures — do not conflate them (ROADMAP A#1)
+    - **Request authentication (caller → us): HMAC, symmetric.** Every request carries
+      `X-Api-Key`, `X-Signature` (HMAC over a canonical payload), `X-Nonce`, and
+      `X-Timestamp`. The caller holds the key; symmetric MAC is appropriate. See the
+      `ApiKeyAuth` + `HmacSignature` security schemes below.
+    - **Decision signature (us → everyone): Ed25519, asymmetric.** Each `Decision`
+      carries a `signature` object produced with our Ed25519 private key. Anyone —
+      customer, auditor, regulator — verifies it against the PUBLISHED public key
+      (`GET /v1/keys/public`) without holding a secret. HMAC here would let a key-holder
+      forge our decisions and is forbidden.
+
+    ## Determinism (ROADMAP A#7)
+    A decision is a pure function of `(request, policy_version, evaluated_at, counter_snapshot)`.
+    `evaluated_at` and `counter_snapshot` are injected by the orchestrator; predicates never
+    read the wall clock or the network. Every decision is therefore replayable.
+  contact:
+    name: Trust Infrastructure
+    url: https://trust-infra.dev
+  license:
+    name: Proprietary
+servers:
+  - url: https://api.trust-infra.dev
+    description: Production
+  - url: http://localhost:8080
+    description: Local development
+tags:
+  - name: authorize
+    description: The decision endpoint (hot path).
+  - name: decisions
+    description: Audit read path.
+  - name: keys
+    description: Public verification keys.
+  - name: system
+    description: Health and liveness.
+security:
+  - ApiKeyAuth: []
+    HmacSignature: []
+paths:
+  /v1/authorize:
+    post:
+      tags: [authorize]
+      operationId: authorize
+      summary: Evaluate a transaction and return a signed decision.
+      description: |
+        Evaluates the request against the caller's active policy bundle and returns an
+        APPROVE / DENY / REVIEW decision with a structured explanation and an Ed25519
+        signature. Idempotent per `idempotency_key`: replaying an identical request with
+        the same key returns the same decision and creates no additional side effect.
+      parameters:
+        - $ref: "#/components/parameters/ApiKey"
+        - $ref: "#/components/parameters/Signature"
+        - $ref: "#/components/parameters/Nonce"
+        - $ref: "#/components/parameters/Timestamp"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "./schemas/authorize-request.schema.json"
+            examples:
+              vendorPayment:
+                summary: Procurement agent paying a vendor
+                externalValue: ./examples/authorize-request.example.json
+      responses:
+        "200":
+          description: A decision was produced (APPROVE, DENY, or REVIEW — all are 200).
+          headers:
+            X-Decision-Id:
+              description: The decision_id, mirrored for logging/correlation.
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: "./schemas/decision.schema.json"
+              examples:
+                approve:
+                  summary: APPROVE
+                  externalValue: ./examples/decision-approve.example.json
+                deny:
+                  summary: DENY (monthly budget exceeded)
+                  externalValue: ./examples/decision-deny.example.json
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/ReplayDetected"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/decisions/{id}:
+    get:
+      tags: [decisions]
+      operationId: getDecision
+      summary: Fetch a stored decision record with verification status.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The decision_id (ULID).
+          schema:
+            $ref: "./schemas/common.schema.json#/$defs/ULID"
+        - $ref: "#/components/parameters/ApiKey"
+        - $ref: "#/components/parameters/Signature"
+        - $ref: "#/components/parameters/Nonce"
+        - $ref: "#/components/parameters/Timestamp"
+      responses:
+        "200":
+          description: The stored decision, with `record_hash` and read-time `signature_verified`.
+          content:
+            application/json:
+              schema:
+                $ref: "./schemas/decision.schema.json"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/decisions:
+    get:
+      tags: [decisions]
+      operationId: listDecisions
+      summary: List stored decisions (paginated, filterable).
+      parameters:
+        - $ref: "#/components/parameters/ApiKey"
+        - $ref: "#/components/parameters/Signature"
+        - $ref: "#/components/parameters/Nonce"
+        - $ref: "#/components/parameters/Timestamp"
+        - name: agent_id
+          in: query
+          required: false
+          schema: { type: string }
+        - name: verdict
+          in: query
+          required: false
+          schema: { type: string, enum: [APPROVE, DENY, REVIEW] }
+        - name: from
+          in: query
+          required: false
+          description: Inclusive lower bound on evaluated_at (RFC 3339).
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          required: false
+          description: Exclusive upper bound on evaluated_at (RFC 3339).
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque pagination cursor from a previous response.
+          schema: { type: string }
+      responses:
+        "200":
+          description: A page of decisions.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [data, next_cursor]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "./schemas/decision.schema.json"
+                  next_cursor:
+                    type: [string, "null"]
+                    description: Cursor for the next page, or null when exhausted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/keys/public:
+    get:
+      tags: [keys]
+      operationId: getPublicKeys
+      summary: Published Ed25519 public keys for verifying decision signatures.
+      description: |
+        JWKS-style document. Verifiers select the key whose `kid` matches the
+        `signature.key_id` on a Decision. Unauthenticated on purpose — public keys are public.
+      security: []
+      responses:
+        "200":
+          description: The current set of public verification keys.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [keys]
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [kty, crv, kid, x, use]
+                      properties:
+                        kty: { type: string, const: OKP, description: Key type (Octet Key Pair). }
+                        crv: { type: string, const: Ed25519 }
+                        kid: { type: string, description: Key id, matches Decision.signature.key_id. }
+                        x: { type: string, description: base64url-encoded public key. }
+                        use: { type: string, const: sig }
+                        status:
+                          type: string
+                          enum: [active, retiring, revoked]
+                          description: Rotation status; retiring keys still verify old decisions.
+  /v1/health:
+    get:
+      tags: [system]
+      operationId: health
+      summary: Decision-plane liveness and upstream status.
+      security: []
+      responses:
+        "200":
+          description: Service is live.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [status]
+                properties:
+                  status: { type: string, enum: [ok, degraded] }
+                  build: { type: string, description: Build/version identifier. }
+                  enrichment:
+                    type: string
+                    enum: [ok, degraded, disabled]
+                    description: Aggregate status of enrichment upstreams (TRD §18).
+        "503":
+          $ref: "#/components/responses/Unavailable"
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-Api-Key
+      description: |
+        Per-key API credential, prefix `azn_live_` / `azn_test_`. Only `sha256(key)` is
+        stored server-side; comparison is constant-time (TRD §11).
+    HmacSignature:
+      type: apiKey
+      in: header
+      name: X-Signature
+      description: |
+        HMAC (symmetric) over the canonical request payload using the API key secret, paired
+        with `X-Nonce` and `X-Timestamp`. Verified constant-time; timestamp skew beyond the
+        configured window and reused nonces are rejected. This authenticates the CALLER and is
+        entirely separate from the Ed25519 signature on the returned Decision.
+  parameters:
+    ApiKey:
+      name: X-Api-Key
+      in: header
+      required: true
+      schema: { type: string, pattern: "^azn_(live|test)_[A-Za-z0-9_-]+$" }
+    Signature:
+      name: X-Signature
+      in: header
+      required: true
+      description: HMAC-SHA256 of the canonical payload, hex or base64url.
+      schema: { type: string }
+    Nonce:
+      name: X-Nonce
+      in: header
+      required: true
+      description: Unique per request; cached per key to reject replays.
+      schema: { type: string, minLength: 8, maxLength: 128 }
+    Timestamp:
+      name: X-Timestamp
+      in: header
+      required: true
+      description: RFC 3339 request time; rejected if skew exceeds the configured window.
+      schema: { type: string, format: date-time }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: |
+        Optional transport mirror of the body `idempotency_key`. When both are present they
+        must match. Makes authorize retry-safe.
+      schema: { type: string, minLength: 8, maxLength: 128 }
+  responses:
+    ValidationError:
+      description: Malformed request (schema/shape).
+      content:
+        application/problem+json:
+          schema: { $ref: "./schemas/error.schema.json" }
+    Unauthorized:
+      description: Missing/invalid API key or bad HMAC signature.
+      content:
+        application/problem+json:
+          schema: { $ref: "./schemas/error.schema.json" }
+    Forbidden:
+      description: Key revoked or lacks scope.
+      content:
+        application/problem+json:
+          schema: { $ref: "./schemas/error.schema.json" }
+    NotFound:
+      description: No such resource.
+      content:
+        application/problem+json:
+          schema: { $ref: "./schemas/error.schema.json" }
+    ReplayDetected:
+      description: Nonce already seen for this key.
+      content:
+        application/problem+json:
+          schema: { $ref: "./schemas/error.schema.json" }
+    Unprocessable:
+      description: Well-formed but semantically invalid (e.g. currency/amount inconsistency).
+      content:
+        application/problem+json:
+          schema: { $ref: "./schemas/error.schema.json" }
+    RateLimited:
+      description: Per-key rate or burst limit exceeded.
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying.
+          schema: { type: integer }
+      content:
+        application/problem+json:
+          schema: { $ref: "./schemas/error.schema.json" }
+    Unavailable:
+      description: Decision plane could not serve (e.g. no last-known-good bundle). Never a silent guess.
+      content:
+        application/problem+json:
+          schema: { $ref: "./schemas/error.schema.json" }

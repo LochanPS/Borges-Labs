@@ -1,0 +1,10 @@
+{
+  "name": "@trust-infra/policy-svc",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Control plane (policy authoring, versioning, bundle signing/publish). Scaffold only — built in ROADMAP Phase 2.",
+  "type": "module",
+  "scripts": {
+    "dev": "echo \"policy-svc not implemented yet (ROADMAP Phase 2)\" && exit 0"
+  }
+}

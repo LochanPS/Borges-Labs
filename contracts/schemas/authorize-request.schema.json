@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.trust-infra.dev/v1/authorize-request.schema.json",
+  "title": "AuthorizeRequest v1",
+  "description": "Body of POST /v1/authorize. The full, explicit input vector for a deterministic authorization decision.\n\nDeterminism contract (ROADMAP A#7): the decision is a pure function of (this request, the active policy_version, evaluated_at, counter_snapshot). Predicates MUST NEVER read the wall clock, RNG, or the network themselves — every time-dependent or stateful input is injected here by the orchestrator (evaluated_at, counter_snapshot). This is what makes decisions replayable.\n\nAuth note: request authentication (API key + HMAC signature + nonce + timestamp) travels in HTTP HEADERS, not in this body — it is a separate, symmetric concern from the Ed25519 signature on the Decision. See the OpenAPI security scheme.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["agent_id", "action", "amount", "currency", "target", "idempotency_key"],
+  "properties": {
+    "agent_id": {
+      "type": "string",
+      "description": "Identifier of the autonomous agent initiating the transaction (the subject whose delegated authority is being checked).",
+      "minLength": 1,
+      "maxLength": 256,
+      "examples": ["procurement-agent-v2"]
+    },
+    "action": {
+      "type": "string",
+      "description": "The action the agent wants to take, dotted namespace. Matched by agent_permission predicates.",
+      "minLength": 1,
+      "maxLength": 128,
+      "examples": ["payment.create"]
+    },
+    "amount": {
+      "$ref": "common.schema.json#/$defs/MonetaryAmount",
+      "description": "Transaction amount as a canonical decimal string, in `currency`. String (not number) for exact money precision and stable signing canonicalization."
+    },
+    "currency": {
+      "$ref": "common.schema.json#/$defs/CurrencyCode"
+    },
+    "target": {
+      "$ref": "common.schema.json#/$defs/Target"
+    },
+    "jurisdiction": {
+      "$ref": "common.schema.json#/$defs/Jurisdiction",
+      "description": "Jurisdiction the transaction is evaluated under. Optional but recommended; jurisdiction_currency predicates require it."
+    },
+    "context": {
+      "type": "object",
+      "description": "Arbitrary caller-supplied key/value context (e.g. invoice_id). Available to predicates as read-only data. Kept free-form on purpose; keep it small and non-sensitive where possible.",
+      "additionalProperties": true,
+      "examples": [{ "invoice_id": "inv_88" }]
+    },
+    "idempotency_key": {
+      "type": "string",
+      "description": "Caller-generated key that makes authorize retry-safe: an identical request replayed with the same key returns the SAME decision and does not create a second budget hold (TRD §9). Use a UUID or ULID.",
+      "minLength": 8,
+      "maxLength": 128,
+      "examples": ["idem_01HXYZ8K3M9QF0R7S2T4V6W8XA"]
+    },
+    "evaluated_at": {
+      "$ref": "common.schema.json#/$defs/Timestamp",
+      "description": "ORCHESTRATOR-INJECTED. The single instant the decision is evaluated against; time_window and any time-dependent predicate read THIS, never the wall clock. Clients SHOULD NOT set it — the authorize service stamps it on intake and echoes it on the Decision. Present in the schema because it is part of the frozen, replayable input vector (ROADMAP A#7)."
+    },
+    "counter_snapshot": {
+      "$ref": "common.schema.json#/$defs/CounterSnapshot",
+      "description": "ORCHESTRATOR-INJECTED. Point-in-time accumulator readings (budgets/velocity) the stateful predicates consume. Clients SHOULD NOT set it — the orchestrator resolves counters and injects them so budget decisions are deterministic and replayable (ROADMAP A#3, A#7). Absent when no stateful predicate applies."
+    }
+  }
+}

@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.trust-infra.dev/v1/decision.schema.json",
+  "title": "Decision v1",
+  "description": "The authorization decision. Serves two roles with one shape:\n  1) the response body of POST /v1/authorize, and\n  2) the stored, tamper-evident audit record (GET /v1/decisions/{id}).\n\nThe signed portion (see Signature.canonicalization) covers the core verdict fields so the receipt is verifiable by any third party against the published Ed25519 public key. Record-only fields (record_hash, signature_verified) are added by the audit/read path and are NOT part of the signed bytes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "decision_id",
+    "verdict",
+    "policy_version_hash",
+    "explanation",
+    "obligations",
+    "latency_ms",
+    "evaluated_at",
+    "signature"
+  ],
+  "properties": {
+    "decision_id": {
+      "$ref": "common.schema.json#/$defs/ULID",
+      "description": "Unique, sortable id for this decision."
+    },
+    "verdict": {
+      "type": "string",
+      "description": "The combined verdict from the combination algebra (TRD §5): any hard DENY ⇒ DENY; else any REVIEW ⇒ REVIEW; else all-satisfied ⇒ APPROVE.",
+      "enum": ["APPROVE", "DENY", "REVIEW"]
+    },
+    "policy_version_hash": {
+      "type": "string",
+      "description": "Content hash of the exact compiled policy bundle version that produced this decision. Pins reproducibility and audit (TRD §6). Format is the publisher's hash scheme (e.g. 'pol_v3_9f2a1c...').",
+      "minLength": 1,
+      "examples": ["pol_v3_9f2a1c7e4b5d6a8f0c1e2d3b4a5f6e7d"]
+    },
+    "explanation": {
+      "type": "object",
+      "description": "Structured, machine- and human-readable reasoning for the verdict (TRD §7).",
+      "additionalProperties": false,
+      "required": ["summary", "matched_rules"],
+      "properties": {
+        "summary": {
+          "type": "string",
+          "description": "Plain-English one-line summary of why the verdict was reached.",
+          "examples": ["Transaction exceeds the monthly budget for procurement-agent."]
+        },
+        "matched_rules": {
+          "type": "array",
+          "description": "Every rule that participated, with the numbers that drove it. An APPROVE lists its satisfied rules the same way a DENY lists the denying rule.",
+          "items": { "$ref": "common.schema.json#/$defs/MatchedRule" }
+        }
+      }
+    },
+    "obligations": {
+      "type": "array",
+      "description": "Conditions the caller must honor for the verdict to hold (e.g. capture within TTL, enrichment was skipped). Empty array on a clean APPROVE.",
+      "items": { "$ref": "common.schema.json#/$defs/Obligation" }
+    },
+    "latency_ms": {
+      "type": "integer",
+      "description": "Server-measured decision latency in milliseconds (evaluation only; excludes the async audit write, which never adds to it).",
+      "minimum": 0,
+      "examples": [7]
+    },
+    "evaluated_at": {
+      "$ref": "common.schema.json#/$defs/Timestamp",
+      "description": "Echoes the orchestrator-injected evaluation instant from the request. Part of the replayable input vector and of the signed bytes."
+    },
+    "signature": {
+      "$ref": "common.schema.json#/$defs/Signature"
+    },
+    "shadow": {
+      "type": "boolean",
+      "description": "True when produced under shadow/advisory mode: the decision was evaluated and logged but the caller MUST NOT enforce it (PRD §6, ROADMAP A#5). Absent/false = enforceable. Optional; defaults to false when omitted.",
+      "default": false
+    },
+    "record_hash": {
+      "type": "string",
+      "description": "RECORD-ONLY (audit read path, not signed). Hash chaining this decision to the previous audit record for the org, giving tamper-evidence over the log (TRD §12). Present on stored records, absent on the immediate authorize response.",
+      "examples": ["rh_7b1c...e9a2"]
+    },
+    "signature_verified": {
+      "type": "boolean",
+      "description": "RECORD-ONLY (computed at read time by GET /v1/decisions/{id}). True iff the stored signature validates against the published public key AND the record_hash chain is intact. Not part of the signed bytes."
+    }
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "decision_id": "01HXYZ8K3M9QF0R7S2T4V6W8XA",
+  "verdict": "APPROVE",
+  "policy_version_hash": "pol_v3_9f2a1c7e4b5d6a8f0c1e2d3b4a5f6e7d",
+  "explanation": {
+    "summary": "All rules satisfied for procurement-agent paying acme-supplies.",
+    "matched_rules": [
+      {
+        "rule_id": "per_txn_5k",
+        "type": "per_transaction_limit",
+        "result": "SATISFIED",
+        "detail": "amount=1200.00 <= per_transaction_limit=5000.00 USD",
+        "evidence": { "amount": "1200.00", "limit": "5000.00", "currency": "USD" }
+      },
+      {
+        "rule_id": "vendor_allowlist",
+        "type": "vendor_allowlist",
+        "result": "SATISFIED",
+        "detail": "target vendor 'acme-supplies' is on the allowlist",
+        "evidence": { "target_id": "acme-supplies", "list": "allow" }
+      },
+      {
+        "rule_id": "agent_can_pay",
+        "type": "agent_permission",
+        "result": "SATISFIED",
+        "detail": "agent 'procurement-agent-v2' is permitted action 'payment.create' to vendor targets",
+        "evidence": { "agent_id": "procurement-agent-v2", "action": "payment.create" }
+      },
+      {
+        "rule_id": "monthly_budget",
+        "type": "rolling_budget",
+        "result": "SATISFIED",
+        "detail": "spend_to_date=12000.00 + amount=1200.00 = 13200.00 <= limit=50000.00 USD (window=2026-08)",
+        "evidence": { "window": "2026-08", "spend_to_date": "12000.00", "amount": "1200.00", "limit": "50000.00", "currency": "USD" }
+      }
+    ]
+  },
+  "obligations": [
+    {
+      "type": "capture_within",
+      "detail": "Budget hold reserved; capture after the payment succeeds or it auto-releases.",
+      "params": { "ttl_seconds": 120, "hold_ref": "hold_01HXYZ8K3M9QF0R7S2T4V6W8XB" }
+    }
+  ],
+  "latency_ms": 7,
+  "evaluated_at": "2026-08-27T10:32:11Z",
+  "signature": {
+    "algorithm": "Ed25519",
+    "key_id": "azn-sign-2026-08",
+    "value": "MEUCIQD_examplE-base64url-ed25519-signature-over-canonical-decision-bytes-AAAA",
+    "canonicalization": "ti-decision-canon/1"
+  }
+}

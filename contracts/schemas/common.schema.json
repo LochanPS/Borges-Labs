@@ -1,0 +1,206 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.trust-infra.dev/v1/common.schema.json",
+  "title": "Common v1",
+  "description": "Shared object and scalar definitions for the AI Transaction Authorization Infrastructure /v1 contract. Referenced by authorize-request, decision, and error schemas.",
+  "$defs": {
+    "MonetaryAmount": {
+      "type": "string",
+      "description": "A monetary amount as a canonical decimal STRING, not a JSON number. Money is represented as a string to preserve exact precision and to give the Ed25519 decision canonicalization a single, stable textual form (JSON floats have no canonical serialization). Format: optional leading minus, integer part, optional fractional part. No thousands separators, no currency symbol, no exponent. The currency is carried separately. Example: \"5000.00\".",
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$",
+      "examples": ["5000.00", "0.99", "150000"]
+    },
+    "CurrencyCode": {
+      "type": "string",
+      "description": "ISO 4217 alphabetic currency code (uppercase, 3 letters).",
+      "pattern": "^[A-Z]{3}$",
+      "examples": ["USD", "EUR", "GBP"]
+    },
+    "Jurisdiction": {
+      "type": "string",
+      "description": "ISO 3166-1 alpha-2 country code (uppercase, 2 letters) naming the jurisdiction the transaction is evaluated under.",
+      "pattern": "^[A-Z]{2}$",
+      "examples": ["US", "GB", "DE"]
+    },
+    "Timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 / ISO 8601 timestamp in UTC (trailing 'Z'). Must be an explicit, fully-qualified instant so it canonicalizes identically everywhere.",
+      "examples": ["2026-08-27T10:32:11Z"]
+    },
+    "ULID": {
+      "type": "string",
+      "description": "ULID — 26-character Crockford base32, lexicographically sortable. Used for decision_id.",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "examples": ["01HXYZ8K3M9QF0R7S2T4V6W8XA"]
+    },
+    "Target": {
+      "type": "object",
+      "description": "The counterparty / resource the action is directed at (e.g. the vendor being paid).",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Kind of target. Constrained enum so policy predicates can match on it deterministically.",
+          "enum": ["vendor", "account", "address", "internal", "unknown"]
+        },
+        "id": {
+          "type": "string",
+          "description": "Stable identifier of the target within its type (e.g. a vendor id in the customer's system).",
+          "minLength": 1,
+          "maxLength": 256,
+          "examples": ["acme-supplies"]
+        }
+      }
+    },
+    "Counter": {
+      "type": "object",
+      "description": "One accumulator reading injected by the orchestrator (e.g. a budget window's spend-to-date). Predicates read these values from the request — they NEVER query Redis/Postgres/network themselves. This is what makes budget/velocity decisions deterministic and replayable (ROADMAP A#7, A#3).",
+      "additionalProperties": false,
+      "required": ["id", "window", "spend_to_date", "limit", "currency"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Identifier of the budget/counter this reading is for (matches the rule_id of the budget predicate that consumes it).",
+          "minLength": 1,
+          "examples": ["monthly_budget"]
+        },
+        "window": {
+          "type": "string",
+          "description": "The accumulation window this reading covers.",
+          "enum": ["day", "month", "rolling"],
+          "examples": ["month"]
+        },
+        "window_key": {
+          "type": "string",
+          "description": "Concrete window instance the reading belongs to (e.g. the calendar month). Present so a replay pins the exact window. Optional for rolling windows.",
+          "examples": ["2026-08"]
+        },
+        "spend_to_date": {
+          "$ref": "#/$defs/MonetaryAmount",
+          "description": "Amount already committed against this counter for the window, as of `as_of` (see CounterSnapshot)."
+        },
+        "limit": {
+          "$ref": "#/$defs/MonetaryAmount",
+          "description": "The cap for this counter/window."
+        },
+        "currency": { "$ref": "#/$defs/CurrencyCode" }
+      }
+    },
+    "CounterSnapshot": {
+      "type": "object",
+      "description": "Point-in-time accumulator state injected by the orchestrator as an EXPLICIT decision input. Because it is part of the request vector, `(request, policy_version, evaluated_at, counter_snapshot)` fully determines the decision and any decision is byte-for-byte replayable. Absent/empty when no stateful predicate applies.",
+      "additionalProperties": false,
+      "required": ["as_of", "counters"],
+      "properties": {
+        "as_of": {
+          "$ref": "#/$defs/Timestamp",
+          "description": "The instant the counter readings were taken. Distinct from `evaluated_at`; recorded so replays are exact."
+        },
+        "counters": {
+          "type": "array",
+          "description": "Zero or more counter readings. Empty array = no stateful state was needed.",
+          "items": { "$ref": "#/$defs/Counter" }
+        }
+      }
+    },
+    "PredicateResult": {
+      "type": "string",
+      "description": "Outcome of a single predicate. SATISFIED/DENIED/REVIEW are the deterministic local outcomes; UNAVAILABLE marks an enriched predicate that could not complete (its declared fail-mode then governs the combined verdict — never a fabricated SATISFIED). See TRD §5, §21.",
+      "enum": ["SATISFIED", "DENIED", "REVIEW", "UNAVAILABLE"]
+    },
+    "MatchedRule": {
+      "type": "object",
+      "description": "One rule that participated in the decision, with the exact numbers that drove it — this is what a policy owner hands an auditor (TRD §7).",
+      "additionalProperties": false,
+      "required": ["rule_id", "type", "result", "detail"],
+      "properties": {
+        "rule_id": {
+          "type": "string",
+          "description": "Identifier of the rule within the policy version.",
+          "minLength": 1,
+          "examples": ["monthly_budget", "vendor_allowlist"]
+        },
+        "type": {
+          "type": "string",
+          "description": "Predicate type that produced this result. The six local types plus the stateful/enriched types.",
+          "enum": [
+            "per_transaction_limit",
+            "vendor_allowlist",
+            "vendor_blocklist",
+            "agent_permission",
+            "time_window",
+            "jurisdiction_currency",
+            "rolling_budget",
+            "sanctions_screen",
+            "vendor_risk"
+          ]
+        },
+        "result": { "$ref": "#/$defs/PredicateResult" },
+        "detail": {
+          "type": "string",
+          "description": "Human-readable, number-bearing explanation of why this rule produced its result.",
+          "examples": ["spend_to_date=48200.00 + amount=5000.00 = 53200.00 > limit=50000.00 USD (window=2026-08)"]
+        },
+        "evidence": {
+          "type": "object",
+          "description": "Machine-readable evidence: the concrete values the predicate used. Free-form per predicate type.",
+          "additionalProperties": true
+        }
+      }
+    },
+    "Obligation": {
+      "type": "object",
+      "description": "A condition the caller MUST honor for the verdict to hold (e.g. step-up approval, capture within TTL, enrichment was skipped). Empty on a clean APPROVE.",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Obligation kind.",
+          "examples": ["capture_within", "enrichment_skipped", "human_review_required"]
+        },
+        "detail": {
+          "type": "string",
+          "description": "Human-readable statement of the obligation."
+        },
+        "params": {
+          "type": "object",
+          "description": "Machine-readable parameters for the obligation (e.g. {\"ttl_seconds\":120}).",
+          "additionalProperties": true
+        }
+      }
+    },
+    "Signature": {
+      "type": "object",
+      "description": "ASYMMETRIC (Ed25519) signature over the Decision. This is the audit receipt: customers AND third parties (auditors, regulators) verify it against the PUBLISHED public key without holding any secret. It is NOT the HMAC used for request authentication — that is a separate, symmetric concern carried in request headers (see the OpenAPI security scheme). HMAC here would let any key-holder forge our decisions and is forbidden (ROADMAP A#1, TRD §11).",
+      "additionalProperties": false,
+      "required": ["algorithm", "key_id", "value", "canonicalization"],
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "description": "Signature algorithm. Fixed to Ed25519 for /v1.",
+          "const": "Ed25519"
+        },
+        "key_id": {
+          "type": "string",
+          "description": "Identifier of the signing key. Enables rotation: an old decision verifies against the public key named here. Resolve via GET /v1/keys/public (JWKS-style).",
+          "minLength": 1,
+          "examples": ["azn-sign-2026-08"]
+        },
+        "value": {
+          "type": "string",
+          "description": "The Ed25519 signature over the canonical decision bytes, base64url (unpadded).",
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "examples": ["Nk9c2mQ8...redacted..."]
+        },
+        "canonicalization": {
+          "type": "string",
+          "description": "Identifier of the canonicalization scheme used to derive the signed bytes, so third parties reproduce it exactly. See /docs/decision-canonicalization.md.",
+          "const": "ti-decision-canon/1"
+        }
+      }
+    }
+  }
+}
