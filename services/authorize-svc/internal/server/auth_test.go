@@ -17,6 +17,7 @@ import (
 	"github.com/trust-infra/authorize-svc/internal/audit"
 	"github.com/trust-infra/authorize-svc/internal/auth"
 	"github.com/trust-infra/authorize-svc/internal/engine"
+	"github.com/trust-infra/authorize-svc/internal/idempotency"
 	"github.com/trust-infra/authorize-svc/internal/ratelimit"
 	"github.com/trust-infra/authorize-svc/internal/signing"
 	contractsv1 "github.com/trust-infra/contracts/gen/go/contractsv1"
@@ -35,9 +36,20 @@ type authHarness struct {
 	orgID   string // org the active/revoked keys belong to
 	store   *audit.MemStore
 	writer  *audit.Writer
+	idem    *idempotency.Mem
 }
 
 func okPing(context.Context) error { return nil }
+
+// stubAuthz is the default authorizer factory: the hardcoded-APPROVE engine stub,
+// really signed. Used by every existing test that only cares about the HTTP surface.
+func stubAuthz(signer *signing.Signer) Authorizer {
+	return engine.Stub{
+		PolicyVersionHash: "pol_test_0000000000000000000000000000000000000000000000000000000000000000",
+		SigningKeyID:      signer.KeyID(),
+		Signer:            signer,
+	}
+}
 
 // newAuthHarness builds a harness with effectively-unlimited rate limits (rate
 // limiting is exercised separately in ratelimit_test.go, so functional tests that
@@ -48,8 +60,15 @@ func newAuthHarness(t *testing.T) *authHarness {
 }
 
 // newAuthHarnessWith lets a test inject a specific limiter and tier table (used by
-// the rate-limit acceptance test).
+// the rate-limit acceptance test). It uses the stub authorizer.
 func newAuthHarnessWith(t *testing.T, limiter ratelimit.Limiter, tiers ratelimit.TierTable) *authHarness {
+	return newAuthHarnessFull(t, limiter, tiers, stubAuthz)
+}
+
+// newAuthHarnessFull is the full builder: it wires a real Ed25519 signer, an
+// in-memory audit store, and an in-memory idempotency cache, and lets the caller
+// choose the authorizer (stub or the real engine over a policy fixture).
+func newAuthHarnessFull(t *testing.T, limiter ratelimit.Limiter, tiers ratelimit.TierTable, authzFor func(*signing.Signer) Authorizer) *authHarness {
 	t.Helper()
 
 	activeGK, err := auth.NewKey(auth.EnvTest, "org_test", testTier)
@@ -76,11 +95,7 @@ func newAuthHarnessWith(t *testing.T, limiter ratelimit.Limiter, tiers ratelimit
 	if err != nil {
 		t.Fatalf("signer: %v", err)
 	}
-	authz := engine.Stub{
-		PolicyVersionHash: "pol_test_0000000000000000000000000000000000000000000000000000000000000000",
-		SigningKeyID:      signer.KeyID(),
-		Signer:            signer,
-	}
+	authz := authzFor(signer)
 
 	encKey := make([]byte, 32)
 	if _, err := rand.Read(encKey); err != nil {
@@ -97,18 +112,21 @@ func newAuthHarnessWith(t *testing.T, limiter ratelimit.Limiter, tiers ratelimit
 
 	retentionFor := func(tier string) time.Duration { return 90 * 24 * time.Hour }
 
+	idem := idempotency.NewMem()
+
 	srv := New(log, BuildInfo{Version: "test", Commit: "abc", Date: "now"},
 		authz, testAuthn(keys), limiter, tiers,
 		Check{Name: "postgres", Ping: okPing},
 		Check{Name: "redis", Ping: okPing},
 	).WithKeys(func() any { return keyring.JWKS() }).
-		WithAudit(writer, store, keyring.VerifyDecision, retentionFor)
+		WithAudit(writer, store, keyring.VerifyDecision, retentionFor).
+		WithIdempotency(idem)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 
 	return &authHarness{
 		ts: ts, active: activeGK.Plaintext, revoked: revokedGK.Plaintext,
-		orgID: "org_test", store: store, writer: writer,
+		orgID: "org_test", store: store, writer: writer, idem: idem,
 	}
 }
 

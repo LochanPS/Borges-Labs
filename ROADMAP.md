@@ -285,6 +285,27 @@ pagination + filters work.
 ```
 
 ### Task 1.7 — End-to-end wiring + integration + tamper test
+> **AMENDED (A2#1, 2026-09-11):** the original "integration tests against real test
+> PG+Redis (docker)" predates the managed-store swap and is **superseded** — Docker is
+> not required. The suite splits by what each part actually needs:
+> - **Hermetic e2e (default `go test`, no Docker, gates every PR):** full chain
+>   signed request → auth → rate limit → **real engine over a policy fixture** →
+>   Ed25519 decision → async audit. Covers real APPROVE, a DENY per local predicate,
+>   REVIEW, 401/403/429, the tamper test, and idempotency (same key ⇒ same decision).
+>   Uses the in-memory store seams (audit `MemStore`, mem key/limiter/idempotency).
+> - **Store-fidelity (optional, build-tagged `integration`, reads `DATABASE_URL`):** the
+>   things only a real Postgres proves — the append-only trigger and advisory-lock chain
+>   linearity in migration 0002. Runs against a Neon branch in CI or any local psql;
+>   skipped by default. *(Deferred: not needed for MVP acceptance; the app-layer chain +
+>   tamper behavior are already proven hermetically.)*
+> - **p99 "local-decision latency":** a decision-path benchmark/percentile test
+>   (`engine.TestDecisionLatency_P99` + `BenchmarkDecision`) — compute + Ed25519 sign,
+>   no I/O, which is what "local-decision latency" denotes. Measured p99 ≈ 1.5ms « 50ms.
+>
+> Delivered: policy JSON loader (`internal/policy`, GitOps per A2#2, see
+> docs/policy-files.md), real engine wired in `main.go` (replaces the stub), idempotency
+> seam (`internal/idempotency`: Redis + mem), hermetic e2e + p99. The prompt below is
+> the original intent; honor the amendment where they differ.
 ```
 Repo: C:\Users\pokka\trust infra. Read TRD.md §19. Wire Tasks 1.1–1.6 together.
 

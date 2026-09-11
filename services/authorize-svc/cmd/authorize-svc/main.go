@@ -20,7 +20,9 @@ import (
 	"github.com/trust-infra/authorize-svc/internal/auth"
 	"github.com/trust-infra/authorize-svc/internal/config"
 	"github.com/trust-infra/authorize-svc/internal/engine"
+	"github.com/trust-infra/authorize-svc/internal/idempotency"
 	"github.com/trust-infra/authorize-svc/internal/logging"
+	"github.com/trust-infra/authorize-svc/internal/policy"
 	"github.com/trust-infra/authorize-svc/internal/ratelimit"
 	"github.com/trust-infra/authorize-svc/internal/server"
 	"github.com/trust-infra/authorize-svc/internal/signing"
@@ -106,13 +108,28 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Phase-0 authorizer seam: hardcoded APPROVE, now REALLY signed. The real engine
-	// implements the same interface next; swapping it is a one-line change here.
-	authz := engine.Stub{
-		PolicyVersionHash: cfg.PolicyVersionHash,
-		SigningKeyID:      signer.KeyID(),
-		Signer:            signer,
+	// Decision engine (Task 1.4/1.7): the real deterministic engine, evaluating a
+	// policy loaded from a JSON file (AUTHZ_POLICY_FILE) or the embedded default
+	// (A2#2 — GitOps policy files, no separate policy-svc yet). This replaces the
+	// hardcoded-APPROVE stub. Every decision cites the loaded policy's version hash.
+	var pol engine.Policy
+	if cfg.PolicyFile != "" {
+		var perr error
+		if pol, perr = policy.Load(cfg.PolicyFile); perr != nil {
+			log.Error("policy load failed", "err", perr, "path", cfg.PolicyFile)
+			os.Exit(1)
+		}
+		log.Info("policy loaded", "path", cfg.PolicyFile, "version", pol.Version, "predicates", len(pol.Predicates))
+	} else {
+		var perr error
+		if pol, perr = policy.Default(); perr != nil {
+			log.Error("default policy load failed", "err", perr)
+			os.Exit(1)
+		}
+		log.Warn("using embedded default policy (set AUTHZ_POLICY_FILE for a custom policy)",
+			"version", pol.Version, "predicates", len(pol.Predicates))
 	}
+	authz := engine.NewEngine(pol, signer.KeyID()).WithSigner(signer)
 
 	// Request authentication (TRD §11): key records from Postgres (source of truth)
 	// fronted by a short-TTL Redis cache; per-key nonces in Redis for replay
@@ -160,7 +177,8 @@ func main() {
 		server.Check{Name: "postgres", Ping: pg.Ping},
 		server.Check{Name: "redis", Ping: rds.Ping},
 	).WithKeys(func() any { return keyring.JWKS() }).
-		WithAudit(auditWriter, auditStore, keyring.VerifyDecision, cfg.RetentionFor)
+		WithAudit(auditWriter, auditStore, keyring.VerifyDecision, cfg.RetentionFor).
+		WithIdempotency(idempotency.NewRedis(rds.Client, cfg.IdempotencyTTL))
 
 	httpSrv := &http.Server{
 		Addr:              cfg.Addr,

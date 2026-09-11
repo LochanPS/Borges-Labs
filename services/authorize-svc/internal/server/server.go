@@ -65,6 +65,18 @@ type Server struct {
 	auditStore     audit.Store
 	verifyDecision func(contractsv1.Decision) error
 	retentionFor   func(tier string) time.Duration
+
+	// idem, when set, caches a decision by (org, idempotency_key) so a repeated
+	// request returns the same decision (Task 1.7). Best-effort: a cache miss or
+	// error never blocks a decision.
+	idem IdempotencyStore
+}
+
+// IdempotencyStore caches a decision by (org, idempotency_key). Implementations:
+// idempotency.Redis (shared, cross-instance) and idempotency.Mem (tests).
+type IdempotencyStore interface {
+	Lookup(ctx context.Context, orgID, idemKey string) (contractsv1.Decision, bool, error)
+	Save(ctx context.Context, orgID, idemKey string, dec contractsv1.Decision) error
 }
 
 // WithKeys wires the public-key set served at GET /v1/keys/public (Task 1.5). fn
@@ -83,6 +95,14 @@ func (s *Server) WithAudit(writer *audit.Writer, store audit.Store, verify func(
 	s.auditStore = store
 	s.verifyDecision = verify
 	s.retentionFor = retentionFor
+	return s
+}
+
+// WithIdempotency wires the idempotency cache (Task 1.7). When set, a repeated
+// authorize request carrying an already-seen idempotency_key returns the cached
+// decision instead of evaluating again.
+func (s *Server) WithIdempotency(store IdempotencyStore) *Server {
+	s.idem = store
 	return s
 }
 

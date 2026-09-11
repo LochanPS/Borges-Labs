@@ -21,10 +21,18 @@ type Config struct {
 	LogLevel string
 	// ShutdownTimeout bounds graceful drain of in-flight requests on SIGTERM.
 	ShutdownTimeout time.Duration
-	// PolicyVersionHash is the compiled-bundle hash every decision cites (TRD §6).
-	// Hardcoded stub until the policy compiler lands; injected so it is never
-	// baked into a handler.
+	// PolicyVersionHash is a legacy override for the decision plane's cited policy
+	// version. It is only used by the Stub authorizer; the real engine derives the
+	// version from the loaded policy file (see PolicyFile). Kept for the stub and
+	// early smoke tests.
 	PolicyVersionHash string
+	// PolicyFile is the path to the JSON policy the engine loads (A2#2 — GitOps
+	// policy files, no separate policy-svc yet). Empty => the binary's embedded
+	// default policy (internal/policy/default.policy.json).
+	PolicyFile string
+	// IdempotencyTTL is how long a decision is cached by its idempotency key so a
+	// repeated authorize request returns the same decision (Task 1.7).
+	IdempotencyTTL time.Duration
 	// SigningKeyID names the Ed25519 key a decision is signed under (TRD §11).
 	SigningKeyID string
 	// SigningPrivateKey is the base64 (std or url) 32-byte Ed25519 seed the decision
@@ -80,6 +88,8 @@ func Load() Config {
 		LogLevel:          env("LOG_LEVEL", "info"),
 		ShutdownTimeout:   envDuration("AUTHZ_SHUTDOWN_TIMEOUT", 10*time.Second),
 		PolicyVersionHash: env("AUTHZ_POLICY_VERSION", "pol_stub_0000000000000000000000000000000000000000000000000000000000000000"),
+		PolicyFile:        env("AUTHZ_POLICY_FILE", ""),
+		IdempotencyTTL:    envDuration("AUTHZ_IDEMPOTENCY_TTL", 24*time.Hour),
 		SigningKeyID:      env("AUTHZ_SIGNING_KEY_ID", "azn-sign-dev"),
 		SigningPrivateKey: env("AUTHZ_SIGNING_PRIVATE_KEY", ""),
 		HMACMaxSkew:       envDuration("AUTHZ_HMAC_MAX_SKEW", 5*time.Minute),

@@ -1,0 +1,26 @@
+{
+  "predicates": [
+    {
+      "id": "default-per-transaction-limit",
+      "type": "per_transaction_limit",
+      "max": "10000.00",
+      "currency": "USD"
+    },
+    {
+      "id": "default-agent-permission",
+      "type": "agent_permission",
+      "allowed_actions": ["payment.create", "payment.capture", "payment.refund"]
+    },
+    {
+      "id": "default-vendor-blocklist",
+      "type": "vendor_blocklist",
+      "vendors": []
+    },
+    {
+      "id": "default-business-hours",
+      "type": "time_window",
+      "start_minute": 0,
+      "end_minute": 0
+    }
+  ]
+}

@@ -67,6 +67,16 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	// Stamp evaluated_at authoritatively (the engine echoes it onto the Decision).
 	req.EvaluatedAt = ""
 
+	// Idempotency (Task 1.7): a repeated key returns the already-issued decision, so
+	// a client retry never produces a second, divergent one. Best-effort — a lookup
+	// miss or error falls through to a fresh evaluation.
+	if dec, ok := s.idempotentReplay(r, req); ok {
+		w.Header().Set("X-Decision-Id", dec.DecisionID)
+		w.Header().Set("X-Idempotent-Replay", "true")
+		writeJSON(w, http.StatusOK, dec)
+		return
+	}
+
 	decision, err := s.authz.Authorize(r.Context(), req)
 	if err != nil {
 		reqLogger(r).Error("authorize failed", "err", err)
@@ -75,6 +85,10 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Record the decision under its idempotency key BEFORE responding, so a retry
+	// that races the client's receipt still resolves to this decision.
+	s.saveIdempotent(r, req, decision)
+
 	w.Header().Set("X-Decision-Id", decision.DecisionID)
 	writeJSON(w, http.StatusOK, decision)
 
@@ -82,6 +96,40 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	// write never adds to latency_ms (TRD §14). Enqueue hands off to the async
 	// writer; the DB round-trip happens on a background goroutine.
 	s.enqueueAudit(r, req, decision)
+}
+
+// idempotentReplay returns a previously-issued decision for this request's
+// idempotency key, if one is cached. No-op (ok=false) when idempotency is not wired
+// or the lookup errors — the cache must never block a decision.
+func (s *Server) idempotentReplay(r *http.Request, req contractsv1.AuthorizeRequest) (contractsv1.Decision, bool) {
+	if s.idem == nil || req.IdempotencyKey == "" {
+		return contractsv1.Decision{}, false
+	}
+	principal, ok := principalOf(r)
+	if !ok {
+		return contractsv1.Decision{}, false
+	}
+	dec, hit, err := s.idem.Lookup(r.Context(), principal.OrgID, req.IdempotencyKey)
+	if err != nil {
+		reqLogger(r).Warn("idempotency lookup failed; evaluating fresh", "err", err)
+		return contractsv1.Decision{}, false
+	}
+	return dec, hit
+}
+
+// saveIdempotent caches the freshly-issued decision under its idempotency key.
+// Best-effort: a store error is logged and does not fail the request.
+func (s *Server) saveIdempotent(r *http.Request, req contractsv1.AuthorizeRequest, decision contractsv1.Decision) {
+	if s.idem == nil || req.IdempotencyKey == "" {
+		return
+	}
+	principal, ok := principalOf(r)
+	if !ok {
+		return
+	}
+	if err := s.idem.Save(r.Context(), principal.OrgID, req.IdempotencyKey, decision); err != nil {
+		reqLogger(r).Warn("idempotency save failed", "err", err)
+	}
 }
 
 // enqueueAudit builds the audit record from the authenticated caller + request +

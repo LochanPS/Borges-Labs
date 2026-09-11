@@ -37,6 +37,10 @@ fields are stored as plaintext until you set `AUTHZ_AUDIT_ENCRYPTION_KEY` (a 32-
 key in base64 or hex) to turn on field-level encryption of amount/target. See
 [docs/audit-log.md](audit-log.md).
 
+The engine evaluates a policy. With no `AUTHZ_POLICY_FILE` set it uses the embedded
+default (in-limit USD payments APPROVE, over-limit or disallowed actions DENY); point
+it at your own JSON file for real rules. See [docs/policy-files.md](policy-files.md).
+
 ## Option B — Docker for local stores (optional)
 
 If you prefer everything local and already have Docker:
