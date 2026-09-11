@@ -5,6 +5,7 @@ package config
 
 import (
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -40,6 +41,33 @@ type Config struct {
 	NonceTTL time.Duration
 	// KeyCacheTTL is the Redis cache lifetime for key -> org lookups (TRD §11).
 	KeyCacheTTL time.Duration
+
+	// --- audit log (Task 1.6, ROADMAP A#10) ---
+
+	// AuditEncryptionKey is the base64 (std/url) or hex 32-byte AES-256-GCM key used
+	// for field-level encryption of sensitive audit fields (amount/target). Empty =>
+	// fields are stored as plaintext (dev/CI). Production supplies this from the
+	// secret manager; KMS custody is a Prod TODO.
+	AuditEncryptionKey string
+	// AuditQueueSize is the depth of the in-proc async-write buffer. 0 => package
+	// default. The async writer never drops; a full buffer applies backpressure to
+	// the (already-sent) response's goroutine only.
+	AuditQueueSize int
+	// AuditRetentionDefault is the fallback retention for a tier not in the per-tier
+	// table below. Retention marks when the sensitive ciphertext becomes eligible for
+	// crypto-shred; it never deletes rows (append-only, A#10).
+	AuditRetentionDefault time.Duration
+	// AuditRetentionByTier overrides retention per caller tier.
+	AuditRetentionByTier map[string]time.Duration
+}
+
+// RetentionFor resolves the audit retention window for a caller tier, falling back
+// to AuditRetentionDefault when the tier is not explicitly configured.
+func (c Config) RetentionFor(tier string) time.Duration {
+	if d, ok := c.AuditRetentionByTier[tier]; ok {
+		return d
+	}
+	return c.AuditRetentionDefault
 }
 
 // Load reads configuration from the environment, applying local-dev defaults
@@ -57,7 +85,28 @@ func Load() Config {
 		HMACMaxSkew:       envDuration("AUTHZ_HMAC_MAX_SKEW", 5*time.Minute),
 		NonceTTL:          envDuration("AUTHZ_NONCE_TTL", 10*time.Minute),
 		KeyCacheTTL:       envDuration("AUTHZ_KEY_CACHE_TTL", 5*time.Minute),
+
+		AuditEncryptionKey:    env("AUTHZ_AUDIT_ENCRYPTION_KEY", ""),
+		AuditQueueSize:        envInt("AUTHZ_AUDIT_QUEUE_SIZE", 1024),
+		AuditRetentionDefault: envDuration("AUTHZ_AUDIT_RETENTION_DEFAULT", 365*24*time.Hour),
+		// Per-tier retention (A#10). Higher tiers keep audit longer; adjust to
+		// regulatory needs. These are the shipped defaults, not a hard limit.
+		AuditRetentionByTier: map[string]time.Duration{
+			"free":       90 * 24 * time.Hour,
+			"default":    365 * 24 * time.Hour,
+			"pro":        730 * 24 * time.Hour,
+			"enterprise": 7 * 365 * 24 * time.Hour,
+		},
 	}
+}
+
+func envInt(key string, def int) int {
+	if v, ok := os.LookupEnv(key); ok && v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return def
 }
 
 func env(key, def string) string {

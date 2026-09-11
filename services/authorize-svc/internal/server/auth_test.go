@@ -14,8 +14,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/trust-infra/authorize-svc/internal/audit"
 	"github.com/trust-infra/authorize-svc/internal/auth"
+	"github.com/trust-infra/authorize-svc/internal/engine"
 	"github.com/trust-infra/authorize-svc/internal/ratelimit"
+	"github.com/trust-infra/authorize-svc/internal/signing"
 	contractsv1 "github.com/trust-infra/contracts/gen/go/contractsv1"
 )
 
@@ -23,19 +26,25 @@ const testTier = "default"
 
 // authHarness is a running service seeded with one active and one revoked test key
 // (the fixture the acceptance criteria call for), plus helpers to sign requests the
-// way a real client would.
+// way a real client would. It wires a REAL Ed25519 signer and an in-memory audit
+// store so the /v1/decisions endpoints can be exercised end to end.
 type authHarness struct {
 	ts      *httptest.Server
 	active  string // plaintext active key
 	revoked string // plaintext revoked key
+	orgID   string // org the active/revoked keys belong to
+	store   *audit.MemStore
+	writer  *audit.Writer
 }
 
 func okPing(context.Context) error { return nil }
 
-// newAuthHarness builds a harness with generous rate limits (rate limiting is not
-// under test here).
+// newAuthHarness builds a harness with effectively-unlimited rate limits (rate
+// limiting is exercised separately in ratelimit_test.go, so functional tests that
+// fire many requests are not throttled).
 func newAuthHarness(t *testing.T) *authHarness {
-	return newAuthHarnessWith(t, testLimiter(), ratelimit.DefaultTiers())
+	generous := ratelimit.TierTable{"default": {PerMinute: 1_000_000, PerSecond: 1_000_000}}
+	return newAuthHarnessWith(t, testLimiter(), generous)
 }
 
 // newAuthHarnessWith lets a test inject a specific limiter and tier table (used by
@@ -56,15 +65,51 @@ func newAuthHarnessWith(t *testing.T, limiter ratelimit.Limiter, tiers ratelimit
 
 	keys := auth.NewMemKeyStore(activeGK.Record, revRec)
 	log := slog.New(slog.NewJSONHandler(io.Discard, nil))
+
+	// Real Ed25519 signer, shared with the read-path verifier so signature_verified
+	// is meaningful. Field-level encryption on, to exercise the at-rest path.
+	keyring := signing.NewKeyring()
+	if _, err := keyring.GenerateActive(); err != nil {
+		t.Fatalf("gen signing key: %v", err)
+	}
+	signer, err := keyring.Signer()
+	if err != nil {
+		t.Fatalf("signer: %v", err)
+	}
+	authz := engine.Stub{
+		PolicyVersionHash: "pol_test_0000000000000000000000000000000000000000000000000000000000000000",
+		SigningKeyID:      signer.KeyID(),
+		Signer:            signer,
+	}
+
+	encKey := make([]byte, 32)
+	if _, err := rand.Read(encKey); err != nil {
+		t.Fatalf("enc key: %v", err)
+	}
+	enc, err := audit.NewAESGCM(encKey)
+	if err != nil {
+		t.Fatalf("aesgcm: %v", err)
+	}
+	store := audit.NewMemStore(enc)
+	writer := audit.NewWriter(store, log, 64)
+	writer.Start()
+	t.Cleanup(func() { _ = writer.Close(context.Background()) })
+
+	retentionFor := func(tier string) time.Duration { return 90 * 24 * time.Hour }
+
 	srv := New(log, BuildInfo{Version: "test", Commit: "abc", Date: "now"},
-		testAuthorizer{}, testAuthn(keys), limiter, tiers,
+		authz, testAuthn(keys), limiter, tiers,
 		Check{Name: "postgres", Ping: okPing},
 		Check{Name: "redis", Ping: okPing},
-	)
+	).WithKeys(func() any { return keyring.JWKS() }).
+		WithAudit(writer, store, keyring.VerifyDecision, retentionFor)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 
-	return &authHarness{ts: ts, active: activeGK.Plaintext, revoked: revokedGK.Plaintext}
+	return &authHarness{
+		ts: ts, active: activeGK.Plaintext, revoked: revokedGK.Plaintext,
+		orgID: "org_test", store: store, writer: writer,
+	}
 }
 
 func newNonce(t *testing.T) string {

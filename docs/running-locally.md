@@ -25,11 +25,17 @@ go run ./cmd/authorize-svc
 That's it — no Docker, no WSL, nothing to install beyond Go. The service connects and
 serves `/health` on `:8080`.
 
-Apply the key migration once (any `psql`, or Neon's SQL console):
+Apply the migrations once (any `psql`, or Neon's SQL console):
 
 ```bash
 psql "$DATABASE_URL" -f deploy/migrations/0001_api_keys.sql
+psql "$DATABASE_URL" -f deploy/migrations/0002_decisions.sql
 ```
+
+The audit log (0002) is append-only and works without extra config — sensitive
+fields are stored as plaintext until you set `AUTHZ_AUDIT_ENCRYPTION_KEY` (a 32-byte
+key in base64 or hex) to turn on field-level encryption of amount/target. See
+[docs/audit-log.md](audit-log.md).
 
 ## Option B — Docker for local stores (optional)
 

@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/trust-infra/authorize-svc/internal/audit"
 	"github.com/trust-infra/authorize-svc/internal/auth"
 	"github.com/trust-infra/authorize-svc/internal/config"
 	"github.com/trust-infra/authorize-svc/internal/engine"
@@ -131,10 +132,35 @@ func main() {
 	limiter := ratelimit.NewRedisLimiter(rds.Client)
 	tiers := ratelimit.DefaultTiers()
 
+	// Append-only audit log (Task 1.6): field-level encryption of amount/target when a
+	// key is configured (else plaintext for dev), a Postgres source-of-truth store, and
+	// an async in-proc writer so persistence never adds to the response latency.
+	var encryptor audit.Encryptor = audit.NopEncryptor{}
+	if cfg.AuditEncryptionKey != "" {
+		key, derr := decodeSeed(cfg.AuditEncryptionKey)
+		if derr != nil {
+			log.Error("audit encryption key decode failed", "err", derr)
+			os.Exit(1)
+		}
+		aes, aerr := audit.NewAESGCM(key)
+		if aerr != nil {
+			log.Error("audit encryption init failed", "err", aerr)
+			os.Exit(1)
+		}
+		encryptor = aes
+		log.Info("audit field-level encryption enabled")
+	} else {
+		log.Warn("audit field-level encryption DISABLED (no AUTHZ_AUDIT_ENCRYPTION_KEY); sensitive fields stored as plaintext")
+	}
+	auditStore := audit.NewPostgresStore(pg.Pool, encryptor)
+	auditWriter := audit.NewWriter(auditStore, log, cfg.AuditQueueSize)
+	auditWriter.Start()
+
 	srv := server.New(log, build, authz, authn, limiter, tiers,
 		server.Check{Name: "postgres", Ping: pg.Ping},
 		server.Check{Name: "redis", Ping: rds.Ping},
-	).WithKeys(func() any { return keyring.JWKS() })
+	).WithKeys(func() any { return keyring.JWKS() }).
+		WithAudit(auditWriter, auditStore, keyring.VerifyDecision, cfg.RetentionFor)
 
 	httpSrv := &http.Server{
 		Addr:              cfg.Addr,
@@ -167,6 +193,12 @@ func main() {
 	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
 		log.Error("graceful shutdown failed", "err", err)
 		os.Exit(1)
+	}
+	// Drain the async audit writer before the DB pool closes so queued records are
+	// persisted. Anything still buffered on a hard crash is lost — the documented
+	// MVP limitation that a durable queue (NATS/Kafka) removes (Task 1.6, §23).
+	if err := auditWriter.Close(shutdownCtx); err != nil {
+		log.Warn("audit writer drain incomplete on shutdown", "err", err)
 	}
 	log.Info("stopped")
 }

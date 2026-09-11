@@ -226,7 +226,10 @@ func TestAuthorize_MethodNotAllowed(t *testing.T) {
 	}
 }
 
-func TestGetDecision_StubNotFound(t *testing.T) {
+// The decisions read endpoints are authenticated (contract + org scoping), so an
+// unauthenticated GET is a 401 with an RFC 7807 body. The authenticated not-found
+// and full read flow live in decisions_test.go.
+func TestGetDecision_RequiresAuth(t *testing.T) {
 	ts := newTestHTTPServer(t)
 	errorSchema := compileContract(t, errorSchemaID)
 
@@ -237,8 +240,8 @@ func TestGetDecision_StubNotFound(t *testing.T) {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 
-	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404; body: %s", resp.StatusCode, body)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401; body: %s", resp.StatusCode, body)
 	}
 	validateAgainst(t, errorSchema, body)
 }

@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/trust-infra/authorize-svc/internal/audit"
 	"github.com/trust-infra/authorize-svc/internal/auth"
 	"github.com/trust-infra/authorize-svc/internal/ratelimit"
 	contractsv1 "github.com/trust-infra/contracts/gen/go/contractsv1"
@@ -55,12 +56,33 @@ type Server struct {
 	// keysJWKS, when set, provides the JWKS served at GET /v1/keys/public. nil means
 	// signing keys are not configured and the endpoint reports 503.
 	keysJWKS func() any
+
+	// Audit wiring (Task 1.6). When auditWriter is set the authorize handler enqueues
+	// each decision for async persistence; when auditStore is set the decisions read
+	// endpoints resolve records and compute signature_verified via verifyDecision.
+	// retentionFor resolves a caller tier to its retention window (A#10); nil => none.
+	auditWriter    *audit.Writer
+	auditStore     audit.Store
+	verifyDecision func(contractsv1.Decision) error
+	retentionFor   func(tier string) time.Duration
 }
 
 // WithKeys wires the public-key set served at GET /v1/keys/public (Task 1.5). fn
 // returns a JSON-serializable JWKS document (e.g. signing.Keyring.JWKS()).
 func (s *Server) WithKeys(fn func() any) *Server {
 	s.keysJWKS = fn
+	return s
+}
+
+// WithAudit wires the append-only decision log (Task 1.6): a writer for async
+// persistence after the authorize response, a store for the read endpoints, and a
+// verifier that recomputes a decision's Ed25519 signature at read time.
+// retentionFor (optional) resolves a caller tier to its retention window (A#10).
+func (s *Server) WithAudit(writer *audit.Writer, store audit.Store, verify func(contractsv1.Decision) error, retentionFor func(string) time.Duration) *Server {
+	s.auditWriter = writer
+	s.auditStore = store
+	s.verifyDecision = verify
+	s.retentionFor = retentionFor
 	return s
 }
 
@@ -84,7 +106,12 @@ func (s *Server) Handler() http.Handler {
 	// rate limiting (needs the authenticated tier), then the handler.
 	authorize := s.authenticate(s.rateLimit(http.HandlerFunc(s.handleAuthorize)))
 	mux.HandleFunc("/v1/authorize", s.method(http.MethodPost, authorize.ServeHTTP))
-	mux.HandleFunc("/v1/decisions/{id}", s.method(http.MethodGet, s.handleGetDecision))
+	// The decisions read endpoints are authenticated and org-scoped: a caller sees
+	// only its own org's records (contract requires ApiKey/Signature/Nonce/Timestamp).
+	getDecision := s.authenticate(s.rateLimit(http.HandlerFunc(s.handleGetDecision)))
+	mux.HandleFunc("/v1/decisions/{id}", s.method(http.MethodGet, getDecision.ServeHTTP))
+	listDecisions := s.authenticate(s.rateLimit(http.HandlerFunc(s.handleListDecisions)))
+	mux.HandleFunc("/v1/decisions", s.method(http.MethodGet, listDecisions.ServeHTTP))
 	mux.HandleFunc("/v1/keys/public", s.method(http.MethodGet, s.handleKeysPublic))
 	mux.HandleFunc("/v1/health", s.method(http.MethodGet, s.handleHealth))
 	// Convenience alias for infra probes that hit the bare path.

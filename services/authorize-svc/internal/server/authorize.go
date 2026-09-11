@@ -6,7 +6,9 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"time"
 
+	"github.com/trust-infra/authorize-svc/internal/audit"
 	contractsv1 "github.com/trust-infra/contracts/gen/go/contractsv1"
 )
 
@@ -75,6 +77,29 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("X-Decision-Id", decision.DecisionID)
 	writeJSON(w, http.StatusOK, decision)
+
+	// Persist to the append-only audit log AFTER the response is written, so the
+	// write never adds to latency_ms (TRD §14). Enqueue hands off to the async
+	// writer; the DB round-trip happens on a background goroutine.
+	s.enqueueAudit(r, req, decision)
+}
+
+// enqueueAudit builds the audit record from the authenticated caller + request +
+// decision and hands it to the async writer. No-op when audit is not wired.
+func (s *Server) enqueueAudit(r *http.Request, req contractsv1.AuthorizeRequest, decision contractsv1.Decision) {
+	if s.auditWriter == nil {
+		return
+	}
+	principal, ok := principalOf(r)
+	if !ok {
+		reqLogger(r).Error("audit skipped: no principal on authenticated request")
+		return
+	}
+	rec := audit.RecordFromDecision(principal.OrgID, principal.KeyID, req, decision)
+	if s.retentionFor != nil {
+		rec.RetainUntil = time.Now().UTC().Add(s.retentionFor(principal.Tier))
+	}
+	s.auditWriter.Enqueue(rec)
 }
 
 // validateAuthorizeRequest checks the required fields and their shapes against the
