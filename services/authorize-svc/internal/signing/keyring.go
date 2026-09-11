@@ -107,6 +107,17 @@ func (k *Keyring) VerifyDecision(d contractsv1.Decision) error {
 	return Verify(d, pub)
 }
 
+// VerifyDetached verifies a detached signature (SignDetached) over msg against the
+// public key named by the signature's key id — the service-side counterpart to the
+// standalone VerifyDetached, used to re-verify a stored policy version at read time.
+func (k *Keyring) VerifyDetached(msg []byte, sig contractsv1.Signature) error {
+	pub, ok := k.PublicKey(sig.KeyID)
+	if !ok {
+		return fmt.Errorf("signing: unknown key id %q", sig.KeyID)
+	}
+	return VerifyDetached(pub, msg, sig)
+}
+
 // JWK is a JSON Web Key for an Ed25519 public key (RFC 8037 OKP). The field set
 // matches the frozen contract (getPublicKeys): kty, crv, kid, x, use, status.
 type JWK struct {

@@ -1,0 +1,231 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.trust-infra.dev/v1/policy.schema.json",
+  "title": "Policy v1",
+  "description": "A declarative authorization policy authored in the control plane (ROADMAP Task 2.1). A policy belongs to an org, targets one or more agents, and lists typed rules. There is NO compiler (ROADMAP A#6): publishing a policy validates it against this schema, assigns an immutable content-hash version, Ed25519-signs the version, and stores it. Every decision cites the version hash it was evaluated under; rollback re-points a policy at a prior version hash (TRD §6).\n\nThis document covers the six LOCAL predicate types the decision engine evaluates today (ROADMAP Task 1.4) plus PLACEHOLDER shapes for the budget and enrichment predicates that Phase 3 / enrichment will add (rolling_budget, sanctions_screen, vendor_risk). Placeholder rules are valid to author, version, and sign now; the current local engine does not yet enforce them (it rejects them at load per internal/policy), so a published policy that contains them is enforced only for its local rules until Phase 3 lands.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["org_id", "name", "rules"],
+  "properties": {
+    "org_id": {
+      "type": "string",
+      "description": "Owning organization id. A policy is always scoped to exactly one org.",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable policy name, unique enough within the org for a policy owner to recognize it.",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "agents": {
+      "type": "array",
+      "description": "Agent ids this policy targets. An empty or omitted list means the policy applies to every agent in the org. A rule may further narrow to a subset via its own `agents` field.",
+      "items": { "type": "string", "minLength": 1, "maxLength": 128 }
+    },
+    "rules": {
+      "type": "array",
+      "description": "The typed rules evaluated for a transaction. Order does not affect the verdict (the combination algebra is order-independent) but IS part of the content hash, so a reordering produces a distinct version.",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/Rule" }
+    }
+  },
+  "$defs": {
+    "MonetaryAmount": {
+      "type": "string",
+      "description": "A monetary amount as a canonical decimal STRING, not a JSON number (see common.schema.json). Positive for a limit.",
+      "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]+)?$"
+    },
+    "CurrencyCode": {
+      "type": "string",
+      "pattern": "^[A-Z]{3}$"
+    },
+    "Jurisdiction": {
+      "type": "string",
+      "pattern": "^[A-Z]{2}$"
+    },
+    "AgentScope": {
+      "type": "array",
+      "description": "Optional per-rule agent narrowing. Empty/omitted = every agent the policy targets.",
+      "items": { "type": "string", "minLength": 1, "maxLength": 128 }
+    },
+    "FailMode": {
+      "type": "string",
+      "description": "How an enriched predicate that cannot complete is treated (TRD §21). fail_closed (the safe default for regulated predicates) yields REVIEW/DENY; fail_open is a customer opt-in.",
+      "enum": ["fail_closed", "fail_open"]
+    },
+    "Rule": {
+      "description": "One typed rule. Discriminated by `type`; each type fixes exactly its allowed fields (additionalProperties:false), so a stray or mistyped field for a given type is rejected with a clear pointer.",
+      "oneOf": [
+        {
+          "title": "per_transaction_limit",
+          "description": "LOCAL. Deny a single transaction whose amount exceeds `max`. A currency mismatch between the rule and the request is REVIEW, never a silent cross-currency compare.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "type", "max"],
+          "properties": {
+            "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "type": { "const": "per_transaction_limit" },
+            "agents": { "$ref": "#/$defs/AgentScope" },
+            "max": { "$ref": "#/$defs/MonetaryAmount" },
+            "currency": { "$ref": "#/$defs/CurrencyCode" }
+          }
+        },
+        {
+          "title": "vendor_allowlist",
+          "description": "LOCAL. Require a vendor target to be on the list. Non-vendor targets are out of scope and pass.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "type", "vendors"],
+          "properties": {
+            "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "type": { "const": "vendor_allowlist" },
+            "agents": { "$ref": "#/$defs/AgentScope" },
+            "vendors": {
+              "type": "array",
+              "description": "Allowed vendor ids. Must be non-empty (an empty allowlist would deny every vendor and is almost certainly a mistake).",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        {
+          "title": "vendor_blocklist",
+          "description": "LOCAL. Deny a vendor target on the list. Non-vendor targets pass. An empty list is permitted (a placeholder blocklist to be filled in).",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "type", "vendors"],
+          "properties": {
+            "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "type": { "const": "vendor_blocklist" },
+            "agents": { "$ref": "#/$defs/AgentScope" },
+            "vendors": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        {
+          "title": "agent_permission",
+          "description": "LOCAL. Constrain which actions an agent may take and, optionally, which targets it may act on. At least one of allowed_actions / allowed_targets must be non-empty.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "type"],
+          "anyOf": [
+            { "required": ["allowed_actions"] },
+            { "required": ["allowed_targets"] }
+          ],
+          "properties": {
+            "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "type": { "const": "agent_permission" },
+            "agents": { "$ref": "#/$defs/AgentScope" },
+            "allowed_actions": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "allowed_targets": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        {
+          "title": "time_window",
+          "description": "LOCAL. Restrict transactions to an allowed time-of-day window (and optional weekdays), evaluated against the injected evaluated_at in UTC. Minutes-of-day in [0,1440); a window with end<=start wraps midnight; start==end is a full-day window.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "type", "start_minute", "end_minute"],
+          "properties": {
+            "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "type": { "const": "time_window" },
+            "agents": { "$ref": "#/$defs/AgentScope" },
+            "start_minute": { "type": "integer", "minimum": 0, "maximum": 1439 },
+            "end_minute": { "type": "integer", "minimum": 0, "maximum": 1439 },
+            "weekdays": {
+              "type": "array",
+              "description": "Allowed weekdays (0=Sunday .. 6=Saturday). Empty/omitted = every day.",
+              "items": { "type": "integer", "minimum": 0, "maximum": 6 }
+            }
+          }
+        },
+        {
+          "title": "jurisdiction_currency",
+          "description": "LOCAL. Restrict which currencies are permitted per jurisdiction. A jurisdiction absent from the map is unconstrained.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "type", "allowed"],
+          "properties": {
+            "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "type": { "const": "jurisdiction_currency" },
+            "agents": { "$ref": "#/$defs/AgentScope" },
+            "allowed": {
+              "type": "object",
+              "description": "Map of jurisdiction (ISO 3166-1 alpha-2) to the currency codes permitted there.",
+              "minProperties": 1,
+              "propertyNames": { "$ref": "#/$defs/Jurisdiction" },
+              "additionalProperties": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "$ref": "#/$defs/CurrencyCode" }
+              }
+            }
+          }
+        },
+        {
+          "title": "rolling_budget",
+          "description": "PLACEHOLDER (Phase 3, stateful — ROADMAP A#3). A budget cap over a window. It is NOT a local predicate: at evaluation time an accumulator service injects spend-to-date and the engine compares spend_to_date + amount against `limit`. Valid to author/version/sign now; not enforced by the current local engine.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "type", "window", "limit"],
+          "properties": {
+            "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "type": { "const": "rolling_budget" },
+            "agents": { "$ref": "#/$defs/AgentScope" },
+            "window": {
+              "type": "string",
+              "description": "Accumulation window this cap applies over.",
+              "enum": ["day", "month", "rolling"]
+            },
+            "limit": { "$ref": "#/$defs/MonetaryAmount" },
+            "currency": { "$ref": "#/$defs/CurrencyCode" }
+          }
+        },
+        {
+          "title": "sanctions_screen",
+          "description": "PLACEHOLDER (enrichment — TRD §21). Screen the counterparty against a sanctions list via an external provider. Best-effort and timeout-bounded; its fail_mode governs the verdict when the upstream is UNAVAILABLE (never a fabricated CLEAR). Valid to author/version/sign now; not enforced by the current local engine.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "type"],
+          "properties": {
+            "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "type": { "const": "sanctions_screen" },
+            "agents": { "$ref": "#/$defs/AgentScope" },
+            "provider": { "type": "string", "minLength": 1, "description": "Enrichment provider identifier." },
+            "fail_mode": { "$ref": "#/$defs/FailMode" }
+          }
+        },
+        {
+          "title": "vendor_risk",
+          "description": "PLACEHOLDER (enrichment — TRD §21). Score the counterparty's risk via an external provider and REVIEW/DENY above a threshold. fail_mode governs an UNAVAILABLE upstream. Valid to author/version/sign now; not enforced by the current local engine.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "type"],
+          "properties": {
+            "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "type": { "const": "vendor_risk" },
+            "agents": { "$ref": "#/$defs/AgentScope" },
+            "provider": { "type": "string", "minLength": 1, "description": "Enrichment provider identifier." },
+            "threshold": {
+              "type": "integer",
+              "description": "Risk score (0..100) at or above which the rule flags REVIEW/DENY.",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "fail_mode": { "$ref": "#/$defs/FailMode" }
+          }
+        }
+      ]
+    }
+  }
+}

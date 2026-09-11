@@ -1,0 +1,42 @@
+{
+  "org_id": "org_acme",
+  "name": "procurement vendor payments",
+  "agents": ["procurement-agent-v2"],
+  "rules": [
+    {
+      "id": "per-txn-limit",
+      "type": "per_transaction_limit",
+      "max": "5000.00",
+      "currency": "USD"
+    },
+    {
+      "id": "allowed-actions",
+      "type": "agent_permission",
+      "allowed_actions": ["payment.create", "payment.capture"]
+    },
+    {
+      "id": "vendor-allowlist",
+      "type": "vendor_allowlist",
+      "vendors": ["acme-supplies", "globex-logistics"]
+    },
+    {
+      "id": "business-hours-utc",
+      "type": "time_window",
+      "start_minute": 540,
+      "end_minute": 1020,
+      "weekdays": [1, 2, 3, 4, 5]
+    },
+    {
+      "id": "us-usd-only",
+      "type": "jurisdiction_currency",
+      "allowed": { "US": ["USD"] }
+    },
+    {
+      "id": "monthly-budget",
+      "type": "rolling_budget",
+      "window": "month",
+      "limit": "50000.00",
+      "currency": "USD"
+    }
+  ]
+}

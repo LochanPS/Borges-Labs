@@ -69,6 +69,7 @@ def validate_example(schema_file: str, example_file: str) -> None:
 validate_example("authorize-request.schema.json", "authorize-request.example.json")
 validate_example("decision.schema.json", "decision-approve.example.json")
 validate_example("decision.schema.json", "decision-deny.example.json")
+validate_example("policy.schema.json", "policy.example.json")
 
 # --- OpenAPI 3.1 structural validation (external refs resolved from disk) ---
 try:
