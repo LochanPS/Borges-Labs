@@ -48,6 +48,9 @@ type Config struct {
 	// BundleLoadTimeout bounds a cold-miss / refresh bundle load so a slow control-plane
 	// store cannot stall the first request for an org.
 	BundleLoadTimeout time.Duration
+	// HoldTTL is how long a two-phase budget hold lives before auto-release (Task 3.1).
+	// A caller must capture or void within it; otherwise the reservation is released.
+	HoldTTL time.Duration
 
 	// SigningPrivateKey is the base64 (std or url) 32-byte Ed25519 seed the decision
 	// signer loads (Task 1.5). Empty in dev => a key is generated at boot and its
@@ -107,6 +110,7 @@ func Load() Config {
 		ControlPlaneEnabled: envBool("AUTHZ_CONTROL_PLANE_ENABLED", true),
 		BundleRefreshTTL:    envDuration("AUTHZ_BUNDLE_REFRESH_TTL", 5*time.Second),
 		BundleLoadTimeout:   envDuration("AUTHZ_BUNDLE_LOAD_TIMEOUT", 2*time.Second),
+		HoldTTL:             envDuration("AUTHZ_HOLD_TTL", 15*time.Minute),
 		SigningKeyID:        env("AUTHZ_SIGNING_KEY_ID", "azn-sign-dev"),
 		SigningPrivateKey: env("AUTHZ_SIGNING_PRIVATE_KEY", ""),
 		HMACMaxSkew:       envDuration("AUTHZ_HMAC_MAX_SKEW", 5*time.Minute),

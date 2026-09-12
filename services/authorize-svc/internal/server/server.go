@@ -20,6 +20,7 @@ import (
 
 	"github.com/trust-infra/authorize-svc/internal/audit"
 	"github.com/trust-infra/authorize-svc/internal/auth"
+	"github.com/trust-infra/authorize-svc/internal/hold"
 	"github.com/trust-infra/authorize-svc/internal/policyctl"
 	"github.com/trust-infra/authorize-svc/internal/ratelimit"
 	contractsv1 "github.com/trust-infra/contracts/gen/go/contractsv1"
@@ -78,6 +79,10 @@ type Server struct {
 	policySvc         *policyctl.Service
 	bundleInvalidator policyBundleInvalidator
 	simulator         policySimulator
+
+	// holds, when set, backs the two-phase budget lifecycle (Task 3.1): a budget-
+	// affecting APPROVE places a hold and capture/void transition it.
+	holds hold.Store
 }
 
 // IdempotencyStore caches a decision by (org, idempotency_key). Implementations:
@@ -134,6 +139,11 @@ func (s *Server) Handler() http.Handler {
 	// rate limiting (needs the authenticated tier), then the handler.
 	authorize := s.authenticate(s.rateLimit(http.HandlerFunc(s.handleAuthorize)))
 	mux.HandleFunc("/v1/authorize", s.method(http.MethodPost, authorize.ServeHTTP))
+	// Two-phase budget (Task 3.1): commit or release a hold placed by a prior authorize.
+	capture := s.authenticate(s.rateLimit(http.HandlerFunc(s.handleCapture)))
+	mux.HandleFunc("/v1/authorize/{id}/capture", s.method(http.MethodPost, capture.ServeHTTP))
+	voidH := s.authenticate(s.rateLimit(http.HandlerFunc(s.handleVoid)))
+	mux.HandleFunc("/v1/authorize/{id}/void", s.method(http.MethodPost, voidH.ServeHTTP))
 	// The decisions read endpoints are authenticated and org-scoped: a caller sees
 	// only its own org's records (contract requires ApiKey/Signature/Nonce/Timestamp).
 	getDecision := s.authenticate(s.rateLimit(http.HandlerFunc(s.handleGetDecision)))

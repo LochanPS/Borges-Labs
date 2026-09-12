@@ -14,6 +14,8 @@ import (
 	"github.com/trust-infra/authorize-svc/internal/auth"
 	"github.com/trust-infra/authorize-svc/internal/bundle"
 	"github.com/trust-infra/authorize-svc/internal/engine"
+	"github.com/trust-infra/authorize-svc/internal/hold"
+	"github.com/trust-infra/authorize-svc/internal/idempotency"
 	"github.com/trust-infra/authorize-svc/internal/policyctl"
 	"github.com/trust-infra/authorize-svc/internal/ratelimit"
 	"github.com/trust-infra/authorize-svc/internal/signing"
@@ -23,9 +25,10 @@ import (
 // cpHarness is a running service with the control plane wired: a real engine driven by
 // the bundle provider, the policyctl service over a MemStore, and one active test key.
 type cpHarness struct {
-	ts     *httptest.Server
-	active string
-	org    string
+	ts      *httptest.Server
+	active  string // advisory (shadow=true) key
+	enforce string // enforcing (shadow=false) key
+	org     string
 }
 
 func newCPHarness(t *testing.T) *cpHarness {
@@ -34,7 +37,13 @@ func newCPHarness(t *testing.T) *cpHarness {
 	if err != nil {
 		t.Fatalf("gen key: %v", err)
 	}
-	keys := auth.NewMemKeyStore(gk.Record)
+	enfGK, err := auth.NewKey(auth.EnvTest, "org_test", testTier)
+	if err != nil {
+		t.Fatalf("gen enforce key: %v", err)
+	}
+	enfRec := enfGK.Record
+	enfRec.Shadow = false // an enforcing key: decisions are binding, holds are placed
+	keys := auth.NewMemKeyStore(gk.Record, enfRec)
 	log := slog.New(slog.NewJSONHandler(io.Discard, nil))
 
 	keyring := signing.NewKeyring()
@@ -58,11 +67,13 @@ func newCPHarness(t *testing.T) *cpHarness {
 	srv := New(log, BuildInfo{Version: "test"}, authz, testAuthn(keys), testLimiter(), generous,
 		Check{Name: "postgres", Ping: okPing},
 	).WithKeys(func() any { return keyring.JWKS() }).
-		WithControlPlane(svc, provider, sim)
+		WithControlPlane(svc, provider, sim).
+		WithHolds(hold.NewMemStore()).
+		WithIdempotency(idempotency.NewMem())
 
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
-	return &cpHarness{ts: ts, active: gk.Plaintext, org: "org_test"}
+	return &cpHarness{ts: ts, active: gk.Plaintext, enforce: enfGK.Plaintext, org: "org_test"}
 }
 
 // sign builds a signed control-plane request (fresh timestamp + nonce), like a client.

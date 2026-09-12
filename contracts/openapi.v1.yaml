@@ -111,6 +111,55 @@ paths:
           $ref: "#/components/responses/RateLimited"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/authorize/{id}/capture:
+    post:
+      tags: [authorize]
+      operationId: captureHold
+      summary: Commit the budget hold placed by an APPROVE (two-phase, A#2).
+      description: |
+        Call after the downstream payment succeeds. Commits the reservation the
+        matching authorize placed (the decision carried a `capture_within` obligation
+        whose `hold_ref` is this id). Idempotent. Rejected 409 if the hold was voided or
+        expired; 404 if there is no hold for the id.
+      parameters:
+        - $ref: "#/components/parameters/DecisionId"
+        - $ref: "#/components/parameters/ApiKey"
+        - $ref: "#/components/parameters/Signature"
+        - $ref: "#/components/parameters/Nonce"
+        - $ref: "#/components/parameters/Timestamp"
+      responses:
+        "200":
+          description: The hold state after capture.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HoldState" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /v1/authorize/{id}/void:
+    post:
+      tags: [authorize]
+      operationId: voidHold
+      summary: Release the budget hold placed by an APPROVE (two-phase, A#2).
+      description: |
+        Call if the downstream payment fails or is aborted. Releases the reservation.
+        Idempotent. Rejected 409 if the hold was already captured; 404 if there is no
+        hold for the id. An untouched hold also auto-releases at its TTL.
+      parameters:
+        - $ref: "#/components/parameters/DecisionId"
+        - $ref: "#/components/parameters/ApiKey"
+        - $ref: "#/components/parameters/Signature"
+        - $ref: "#/components/parameters/Nonce"
+        - $ref: "#/components/parameters/Timestamp"
+      responses:
+        "200":
+          description: The hold state after void.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HoldState" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
   /v1/decisions/{id}:
     get:
       tags: [decisions]
@@ -522,6 +571,12 @@ components:
       required: true
       description: The policy id (`pol_<ULID>`).
       schema: { type: string, minLength: 1 }
+    DecisionId:
+      name: id
+      in: path
+      required: true
+      description: The decision id (ULID) whose budget hold is being captured/voided.
+      schema: { $ref: "./schemas/common.schema.json#/$defs/ULID" }
   responses:
     ValidationError:
       description: Malformed request (schema/shape).
@@ -567,7 +622,27 @@ components:
       content:
         application/problem+json:
           schema: { $ref: "./schemas/error.schema.json" }
+    Conflict:
+      description: Illegal state transition (e.g. capturing a voided or expired budget hold).
+      content:
+        application/problem+json:
+          schema: { $ref: "./schemas/error.schema.json" }
   schemas:
+    HoldState:
+      type: object
+      description: A budget hold's state after a capture/void transition (Task 3.1).
+      additionalProperties: false
+      required: [decision_id, state]
+      properties:
+        decision_id: { type: string, description: The decision id the hold is addressed by. }
+        state:
+          type: string
+          enum: [held, captured, voided, expired]
+          description: Lifecycle state. captured/voided/expired are terminal.
+        budget_id: { type: string }
+        amount: { $ref: "./schemas/common.schema.json#/$defs/MonetaryAmount" }
+        currency: { $ref: "./schemas/common.schema.json#/$defs/CurrencyCode" }
+        expires_at: { $ref: "./schemas/common.schema.json#/$defs/Timestamp" }
     PolicyWriteRequest:
       type: object
       description: |

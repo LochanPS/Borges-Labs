@@ -21,6 +21,7 @@ import (
 	"github.com/trust-infra/authorize-svc/internal/bundle"
 	"github.com/trust-infra/authorize-svc/internal/config"
 	"github.com/trust-infra/authorize-svc/internal/engine"
+	"github.com/trust-infra/authorize-svc/internal/hold"
 	"github.com/trust-infra/authorize-svc/internal/idempotency"
 	"github.com/trust-infra/authorize-svc/internal/logging"
 	"github.com/trust-infra/authorize-svc/internal/policy"
@@ -131,7 +132,7 @@ func main() {
 		log.Warn("using embedded default policy (set AUTHZ_POLICY_FILE for a custom policy)",
 			"version", pol.Version, "predicates", len(pol.Predicates))
 	}
-	engineCore := engine.NewEngine(pol, signer.KeyID()).WithSigner(signer)
+	engineCore := engine.NewEngine(pol, signer.KeyID()).WithSigner(signer).WithHoldTTL(cfg.HoldTTL)
 
 	// Control plane + bundle propagation (Task 2.2). When enabled, published policy
 	// versions serve per-org via an in-memory cache refreshed off the hot path; the
@@ -208,6 +209,9 @@ func main() {
 	if policySvc != nil {
 		srv = srv.WithControlPlane(policySvc, bundleProvider, simulator)
 	}
+	// Two-phase budget holds (Task 3.1): Redis-backed, TTL auto-release. A budget-
+	// affecting APPROVE places a hold; capture/void commit or release it.
+	srv = srv.WithHolds(hold.NewRedisStore(rds.Client))
 
 	httpSrv := &http.Server{
 		Addr:              cfg.Addr,

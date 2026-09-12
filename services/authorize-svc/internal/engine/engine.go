@@ -16,12 +16,50 @@ import (
 // without importing the control plane; internal/bundle returns this exact value.
 var ErrNoActiveBundle = errors.New("engine: no active bundle for org")
 
-// Policy is an in-memory, immutable set of predicates the engine evaluates. In MVP it
-// is constructed from a fixture; Phase 2 loads it from a published, content-hashed
-// bundle. Version is the policy_version_hash every decision cites.
+// Policy is an in-memory, immutable set of predicates the engine evaluates, plus any
+// budget declarations that apply. Version is the policy_version_hash every decision
+// cites. Predicates are the LOCAL rules evaluated here; Budgets are stateful rules
+// (rolling_budget) that are NOT evaluated locally (ROADMAP A#3) — in Phase 3.1 their
+// presence marks a decision budget-affecting (a hold is placed); Phase 3.2 adds the
+// atomic counter arithmetic and limit enforcement.
 type Policy struct {
 	Version    string
 	Predicates []Predicate
+	Budgets    []BudgetDecl
+}
+
+// BudgetDecl is a declared budget from a rolling_budget rule: enough for Phase 3.1 to
+// know a decision consumes budget (and place a hold). The spend/limit arithmetic is
+// Phase 3.2.
+type BudgetDecl struct {
+	ID       string
+	Agents   []string // empty = every agent
+	Window   string   // day | month | rolling
+	Limit    string
+	Currency string
+}
+
+// appliesTo reports whether this budget governs the given agent.
+func (b BudgetDecl) appliesTo(agentID string) bool {
+	if len(b.Agents) == 0 {
+		return true
+	}
+	for _, a := range b.Agents {
+		if a == agentID {
+			return true
+		}
+	}
+	return false
+}
+
+// applicableBudget returns the first budget governing agentID, if any.
+func (p Policy) applicableBudget(agentID string) (BudgetDecl, bool) {
+	for _, b := range p.Budgets {
+		if b.appliesTo(agentID) {
+			return b, true
+		}
+	}
+	return BudgetDecl{}, false
 }
 
 // BundleProvider resolves the active policy bundle for an org at decision time
@@ -48,7 +86,18 @@ type Engine struct {
 	// Provider, when set, resolves the per-org active bundle (Task 2.2). When nil the
 	// engine uses the static Policy for every org.
 	Provider BundleProvider
+	// HoldTTL is how long a budget hold lives before auto-release (Phase 3.1). The
+	// engine stamps it into the capture_within obligation's expires_at; the server
+	// places the hold with the same TTL. Zero => DefaultHoldTTL.
+	HoldTTL time.Duration
 }
+
+// ObligationCaptureWithin is re-exported from the contract for local use (ROADMAP A#2,
+// Phase 3.1).
+const ObligationCaptureWithin = contractsv1.ObligationCaptureWithin
+
+// DefaultHoldTTL is the fallback hold lifetime when Engine.HoldTTL is unset.
+const DefaultHoldTTL = 15 * time.Minute
 
 // NewEngine constructs an Engine over a policy.
 func NewEngine(policy Policy, signingKeyID string) Engine {
@@ -66,6 +115,19 @@ func (e Engine) WithSigner(s *signing.Signer) Engine {
 func (e Engine) WithProvider(p BundleProvider) Engine {
 	e.Provider = p
 	return e
+}
+
+// WithHoldTTL returns a copy of the engine that stamps budget holds with ttl (Phase 3.1).
+func (e Engine) WithHoldTTL(ttl time.Duration) Engine {
+	e.HoldTTL = ttl
+	return e
+}
+
+func (e Engine) holdTTL() time.Duration {
+	if e.HoldTTL > 0 {
+		return e.HoldTTL
+	}
+	return DefaultHoldTTL
 }
 
 // Authorize implements the server's Authorizer seam: it resolves the org's active
@@ -101,6 +163,17 @@ func (e Engine) Authorize(ctx context.Context, orgID string, req contractsv1.Aut
 	// shadow marks an advisory (log-only) decision the caller must not enforce (A#5).
 	// It is part of the SIGNED bytes, so it is set before signing.
 	dec.Shadow = shadow
+
+	// Two-phase budget (Phase 3.1, A#2): a NON-shadow APPROVE against a policy that
+	// declares a budget for this agent places a hold. The engine declares the hold via
+	// a signed capture_within obligation; the server persists the reservation. A shadow
+	// decision is advisory and never reserves budget; a DENY/REVIEW consumes nothing.
+	if !shadow && dec.Verdict == contractsv1.VerdictApprove {
+		if b, ok := pol.applicableBudget(req.AgentID); ok {
+			dec.Obligations = append(dec.Obligations, e.captureWithinObligation(b, req, evaluatedAt, dec.DecisionID))
+		}
+	}
+
 	dec.Signature = contractsv1.Signature{
 		Algorithm:        "Ed25519",
 		KeyID:            e.SigningKeyID,
@@ -114,6 +187,32 @@ func (e Engine) Authorize(ctx context.Context, orgID string, req contractsv1.Aut
 	}
 	dec.LatencyMs = int(time.Since(start).Milliseconds())
 	return dec, nil
+}
+
+// captureWithinObligation builds the signed obligation that declares a budget hold on
+// an APPROVE. hold_ref is the decision id: capture/void address the hold by it. All
+// values are deterministic in (budget, request, evaluated_at), so a replay reproduces
+// the identical obligation and signature. expires_at = evaluated_at + TTL.
+func (e Engine) captureWithinObligation(b BudgetDecl, req contractsv1.AuthorizeRequest, evaluatedAt, decisionID string) contractsv1.Obligation {
+	ttl := e.holdTTL()
+	base := time.Now().UTC()
+	if t, err := time.Parse(time.RFC3339, evaluatedAt); err == nil {
+		base = t.UTC()
+	}
+	expiresAt := base.Add(ttl).Format(time.RFC3339)
+	return contractsv1.Obligation{
+		Type:   ObligationCaptureWithin,
+		Detail: fmt.Sprintf("Budget %q hold placed for %s %s; capture on payment success or void on failure within %s (else it auto-expires).", b.ID, req.Amount, req.Currency, ttl),
+		Params: map[string]interface{}{
+			"budget_id":   b.ID,
+			"window":      b.Window,
+			"amount":      req.Amount,
+			"currency":    req.Currency,
+			"ttl_seconds": int(ttl.Seconds()),
+			"expires_at":  expiresAt,
+			"hold_ref":    decisionID,
+		},
+	}
 }
 
 // Evaluate is the pure decision core: it evaluates the applicable predicates against a

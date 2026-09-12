@@ -38,10 +38,11 @@ import (
 // engine importing this package.
 var ErrNoActiveBundle = engine.ErrNoActiveBundle
 
-// enrichedTypes are the placeholder rule types the local engine cannot evaluate yet;
-// Compile drops them from the servable bundle (Phase 3 / enrichment adds them).
-var enrichedTypes = map[string]bool{
-	string(contractsv1.TypeRollingBudget):   true,
+// droppedTypes are the enrichment placeholder rule types the local engine cannot
+// evaluate and that carry no Phase-3.1 meaning; Compile drops them from the servable
+// bundle (enrichment adds them later). rolling_budget is NOT here — it is routed into
+// Policy.Budgets so a decision can be marked budget-affecting (Phase 3.1).
+var droppedTypes = map[string]bool{
 	string(contractsv1.TypeSanctionsScreen): true,
 	string(contractsv1.TypeVendorRisk):      true,
 }
@@ -61,11 +62,22 @@ func Compile(v *policyctl.Version) (engine.Policy, error) {
 // validated by the decision plane's own loader (internal/policy) for parity.
 func CompileRules(version string, rules []policyctl.Rule) (engine.Policy, error) {
 	local := make([]policyctl.Rule, 0, len(rules))
+	var budgets []engine.BudgetDecl
 	for _, r := range rules {
-		if enrichedTypes[r.Type] {
-			continue
+		switch {
+		case r.Type == string(contractsv1.TypeRollingBudget):
+			budgets = append(budgets, engine.BudgetDecl{
+				ID:       r.ID,
+				Agents:   r.Agents,
+				Window:   r.Window,
+				Limit:    r.Limit,
+				Currency: r.Currency,
+			})
+		case droppedTypes[r.Type]:
+			// enrichment placeholder — not servable locally yet
+		default:
+			local = append(local, r)
 		}
-		local = append(local, r)
 	}
 	raw, err := json.Marshal(map[string]any{
 		"version":    version,
@@ -78,6 +90,7 @@ func CompileRules(version string, rules []policyctl.Rule) (engine.Policy, error)
 	if err != nil {
 		return engine.Policy{}, fmt.Errorf("bundle: compile %s: %w", version, err)
 	}
+	pol.Budgets = budgets
 	return pol, nil
 }
 

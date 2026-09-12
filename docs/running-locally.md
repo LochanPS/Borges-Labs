@@ -45,6 +45,12 @@ keys default to shadow (`authz-keygen` mints advisory keys; pass `-enforce` for 
 enforcing key). A shadow key's decisions are evaluated and audited but returned
 `shadow:true` (plus an `X-Shadow: true` header) so the caller does not enforce them.
 
+Two-phase budget holds (Task 3.1, [docs/budget-holds.md](budget-holds.md)) are
+Redis-backed — no migration. A budget-affecting APPROVE places a hold; commit it with
+`POST /v1/authorize/{id}/capture` or release with `.../void`; an untouched hold
+auto-expires after `AUTHZ_HOLD_TTL` (default 15m). The reservation arithmetic
+(counters, no-oversell) lands in Task 3.2.
+
 The audit log (0002) is append-only and works without extra config — sensitive
 fields are stored as plaintext until you set `AUTHZ_AUDIT_ENCRYPTION_KEY` (a 32-byte
 key in base64 or hex) to turn on field-level encryption of amount/target. See

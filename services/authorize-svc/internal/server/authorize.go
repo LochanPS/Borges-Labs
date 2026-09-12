@@ -100,6 +100,11 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	// that races the client's receipt still resolves to this decision.
 	s.saveIdempotent(r, req, decision)
 
+	// Place the budget hold (if this APPROVE is budget-affecting) BEFORE responding, so
+	// the caller can immediately capture/void it. Only on the fresh path — an idempotent
+	// replay's hold already exists (and Place is idempotent regardless).
+	s.placeHold(r, req, decision, orgID)
+
 	w.Header().Set("X-Decision-Id", decision.DecisionID)
 	if decision.Shadow {
 		// Advisory/log-only: an extra signal alongside the signed shadow field so a

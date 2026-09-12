@@ -128,6 +128,12 @@ type Explanation struct {
 	MatchedRules []MatchedRule `json:"matched_rules"`
 }
 
+// ObligationCaptureWithin is the Obligation.Type marking an APPROVE that placed a
+// budget hold: the caller must capture (payment succeeded) or void (failed) the hold —
+// addressed by the decision id in params.hold_ref — before params.expires_at, else it
+// auto-expires and the reservation is released (ROADMAP A#2, Phase 3.1).
+const ObligationCaptureWithin = "capture_within"
+
 // Obligation is a condition the caller must honor for the verdict to hold.
 type Obligation struct {
 	Type   string                 `json:"type"`
