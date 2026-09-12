@@ -90,6 +90,42 @@ type Engine struct {
 	// engine stamps it into the capture_within obligation's expires_at; the server
 	// places the hold with the same TTL. Zero => DefaultHoldTTL.
 	HoldTTL time.Duration
+	// Reserver, when set, atomically reserves against a budget counter for a
+	// budget-affecting APPROVE (Phase 3.2, A#3). Nil => budgets are declared but not
+	// enforced (Phase 3.1 behavior: a hold is still placed but nothing gates the cap).
+	Reserver BudgetReserver
+}
+
+// BudgetOutcome is the result of an atomic budget reservation.
+type BudgetOutcome int
+
+const (
+	// BudgetWithinLimit: the amount was reserved; spend_to_date + amount <= limit.
+	BudgetWithinLimit BudgetOutcome = iota
+	// BudgetExceeded: the amount would exceed the cap; nothing was reserved.
+	BudgetExceeded
+	// BudgetUnavailable: the counter could not be consulted (e.g. Redis down); nothing
+	// was reserved. Fail-closed per §21 — never a fabricated within-limit.
+	BudgetUnavailable
+)
+
+// BudgetResult is what a BudgetReserver returns. SpendToDate/Limit/WindowKey are the
+// evidence the decision explanation cites; they may be empty on BudgetUnavailable.
+type BudgetResult struct {
+	Outcome     BudgetOutcome
+	SpendToDate string
+	Limit       string
+	WindowKey   string
+}
+
+// BudgetReserver atomically reserves an amount against a declared budget and reports
+// the outcome (ROADMAP A#3, Phase 3.2). It is the stateful accumulator that lives
+// OUTSIDE the local engine: the engine calls it only after the local rules approve and
+// folds its result into the verdict. A within-limit reservation is durable (it becomes
+// the hold the caller captures/voids). Implementations bound their own latency and, on
+// a backing-store failure, return BudgetUnavailable — they never fabricate a satisfy.
+type BudgetReserver interface {
+	Reserve(ctx context.Context, orgID, decisionID string, req contractsv1.AuthorizeRequest, b BudgetDecl) BudgetResult
 }
 
 // ObligationCaptureWithin is re-exported from the contract for local use (ROADMAP A#2,
@@ -121,6 +157,62 @@ func (e Engine) WithProvider(p BundleProvider) Engine {
 func (e Engine) WithHoldTTL(ttl time.Duration) Engine {
 	e.HoldTTL = ttl
 	return e
+}
+
+// WithReserver returns a copy of the engine that enforces budgets via r (Phase 3.2).
+func (e Engine) WithReserver(r BudgetReserver) Engine {
+	e.Reserver = r
+	return e
+}
+
+// budgetPredicateResult maps a reservation outcome to an algebra input. A budget is an
+// enriched (stateful) predicate; UNAVAILABLE fail-closes to REVIEW (§21).
+func budgetPredicateResult(b BudgetDecl, res BudgetResult) PredicateResult {
+	pr := PredicateResult{RuleID: b.ID, Enriched: true}
+	switch res.Outcome {
+	case BudgetWithinLimit:
+		pr.Outcome = Satisfied
+	case BudgetExceeded:
+		pr.Outcome = Denied
+	default: // BudgetUnavailable
+		pr.Outcome = Unavailable
+		pr.FailMode = FailClosedReview
+	}
+	return pr
+}
+
+// budgetMatchedRule builds the explanation row for the budget predicate (TRD §7).
+func budgetMatchedRule(b BudgetDecl, req contractsv1.AuthorizeRequest, res BudgetResult) contractsv1.MatchedRule {
+	ev := map[string]interface{}{
+		"budget_id": b.ID,
+		"window":    b.Window,
+		"amount":    req.Amount,
+		"currency":  req.Currency,
+	}
+	if res.WindowKey != "" {
+		ev["window_key"] = res.WindowKey
+	}
+	if res.SpendToDate != "" {
+		ev["spend_to_date"] = res.SpendToDate
+	}
+	if res.Limit != "" {
+		ev["limit"] = res.Limit
+	}
+	mr := contractsv1.MatchedRule{RuleID: b.ID, Type: contractsv1.TypeRollingBudget, Evidence: ev}
+	switch res.Outcome {
+	case BudgetWithinLimit:
+		mr.Result = contractsv1.ResultSatisfied
+		mr.Detail = fmt.Sprintf("spend_to_date=%s + amount=%s <= limit=%s %s (window=%s)",
+			res.SpendToDate, req.Amount, res.Limit, req.Currency, res.WindowKey)
+	case BudgetExceeded:
+		mr.Result = contractsv1.ResultDenied
+		mr.Detail = fmt.Sprintf("spend_to_date=%s + amount=%s > limit=%s %s (window=%s)",
+			res.SpendToDate, req.Amount, res.Limit, req.Currency, res.WindowKey)
+	default:
+		mr.Result = contractsv1.ResultUnavailable
+		mr.Detail = fmt.Sprintf("budget %q counter unavailable; fail-closed to REVIEW", b.ID)
+	}
+	return mr
 }
 
 func (e Engine) holdTTL() time.Duration {
@@ -159,19 +251,43 @@ func (e Engine) Authorize(ctx context.Context, orgID string, req contractsv1.Aut
 		evaluatedAt = start.UTC().Format(time.RFC3339)
 	}
 
-	dec := Evaluate(pol, req, evaluatedAt)
-	// shadow marks an advisory (log-only) decision the caller must not enforce (A#5).
-	// It is part of the SIGNED bytes, so it is set before signing.
+	decID := ulid.New()
+	results, matched := evalLocal(pol, buildInput(req, evaluatedAt))
+
+	// Two-phase budget (A#2/A#3, Phase 3.1/3.2). The budget is a STATEFUL predicate
+	// evaluated OUTSIDE the local engine: only when the local rules already APPROVE and
+	// the decision is enforcing (non-shadow) do we atomically RESERVE against the budget
+	// counter. The reserver returns WITHIN_LIMIT / EXCEEDED / UNAVAILABLE, which folds
+	// into the algebra like any other predicate (EXCEEDED ⇒ DENY; UNAVAILABLE ⇒ fail
+	// closed to REVIEW — never a fabricated satisfy, §21). Reserving only after a local
+	// APPROVE means a locally-denied txn never touches the counter (no side effect).
+	var (
+		budgetHeld bool
+		heldBudget BudgetDecl
+	)
+	if !shadow && Combine(results) == Approve {
+		if b, ok := pol.applicableBudget(req.AgentID); ok {
+			if e.Reserver != nil {
+				res := e.Reserver.Reserve(ctx, orgID, decID, req, b)
+				results = append(results, budgetPredicateResult(b, res))
+				matched = append(matched, budgetMatchedRule(b, req, res))
+				budgetHeld = res.Outcome == BudgetWithinLimit
+			} else {
+				// No reserver wired (Phase 3.1 behavior): declare the hold via the
+				// obligation without enforcing the cap. Phase 3.2 supplies a reserver.
+				budgetHeld = true
+			}
+			heldBudget = b
+		}
+	}
+
+	verdict := Combine(results)
+	dec := assembleDecision(decID, verdict, pol.Version, matched, evaluatedAt)
 	dec.Shadow = shadow
 
-	// Two-phase budget (Phase 3.1, A#2): a NON-shadow APPROVE against a policy that
-	// declares a budget for this agent places a hold. The engine declares the hold via
-	// a signed capture_within obligation; the server persists the reservation. A shadow
-	// decision is advisory and never reserves budget; a DENY/REVIEW consumes nothing.
-	if !shadow && dec.Verdict == contractsv1.VerdictApprove {
-		if b, ok := pol.applicableBudget(req.AgentID); ok {
-			dec.Obligations = append(dec.Obligations, e.captureWithinObligation(b, req, evaluatedAt, dec.DecisionID))
-		}
+	// A within-limit reservation is a placed hold the caller must capture or void.
+	if budgetHeld {
+		dec.Obligations = append(dec.Obligations, e.captureWithinObligation(heldBudget, req, evaluatedAt, decID))
 	}
 
 	dec.Signature = contractsv1.Signature{
@@ -221,10 +337,14 @@ func (e Engine) captureWithinObligation(b BudgetDecl, req contractsv1.AuthorizeR
 // dry-run/simulate (Task 2.3) uses it directly without signing or auditing.
 // Deterministic in (pol, req, evaluatedAt): identical inputs → identical output.
 func Evaluate(pol Policy, req contractsv1.AuthorizeRequest, evaluatedAt string) contractsv1.Decision {
-	in := buildInput(req, evaluatedAt)
+	results, matched := evalLocal(pol, buildInput(req, evaluatedAt))
+	return assembleDecision(ulid.New(), Combine(results), pol.Version, matched, evaluatedAt)
+}
 
-	// All six types are local (no I/O), so evaluate them all and let the
-	// order-independent algebra combine them (TRD §5).
+// evalLocal evaluates the applicable LOCAL predicates and returns their algebra inputs
+// and the matched-rule records. Shared by Evaluate and Authorize (which then folds in
+// the stateful budget result before combining).
+func evalLocal(pol Policy, in Input) ([]PredicateResult, []contractsv1.MatchedRule) {
 	results := make([]PredicateResult, 0, len(pol.Predicates))
 	matched := make([]contractsv1.MatchedRule, 0, len(pol.Predicates))
 	for _, p := range pol.Predicates {
@@ -232,11 +352,7 @@ func Evaluate(pol Policy, req contractsv1.AuthorizeRequest, evaluatedAt string) 
 			continue
 		}
 		r := p.Evaluate(in)
-		results = append(results, PredicateResult{
-			RuleID:   p.RuleID(),
-			Enriched: false,
-			Outcome:  r.Outcome,
-		})
+		results = append(results, PredicateResult{RuleID: p.RuleID(), Enriched: false, Outcome: r.Outcome})
 		matched = append(matched, contractsv1.MatchedRule{
 			RuleID:   p.RuleID(),
 			Type:     p.Type(),
@@ -245,12 +361,16 @@ func Evaluate(pol Policy, req contractsv1.AuthorizeRequest, evaluatedAt string) 
 			Evidence: r.Evidence,
 		})
 	}
+	return results, matched
+}
 
-	verdict := Combine(results)
+// assembleDecision builds an UNSIGNED Decision from a combined verdict and its matched
+// rules. Signature, shadow, obligations, and latency are set by the caller.
+func assembleDecision(id string, verdict Verdict, version string, matched []contractsv1.MatchedRule, evaluatedAt string) contractsv1.Decision {
 	return contractsv1.Decision{
-		DecisionID:        ulid.New(),
+		DecisionID:        id,
 		Verdict:           toContractVerdict(verdict),
-		PolicyVersionHash: pol.Version,
+		PolicyVersionHash: version,
 		Explanation:       assembleExplanation(verdict, matched),
 		Obligations:       []contractsv1.Obligation{},
 		EvaluatedAt:       evaluatedAt,

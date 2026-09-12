@@ -20,6 +20,7 @@ import (
 	"github.com/trust-infra/authorize-svc/internal/auth"
 	"github.com/trust-infra/authorize-svc/internal/bundle"
 	"github.com/trust-infra/authorize-svc/internal/config"
+	"github.com/trust-infra/authorize-svc/internal/budget"
 	"github.com/trust-infra/authorize-svc/internal/engine"
 	"github.com/trust-infra/authorize-svc/internal/hold"
 	"github.com/trust-infra/authorize-svc/internal/idempotency"
@@ -132,7 +133,17 @@ func main() {
 		log.Warn("using embedded default policy (set AUTHZ_POLICY_FILE for a custom policy)",
 			"version", pol.Version, "predicates", len(pol.Predicates))
 	}
-	engineCore := engine.NewEngine(pol, signer.KeyID()).WithSigner(signer).WithHoldTTL(cfg.HoldTTL)
+	// Two-phase budget enforcement (Task 3.1/3.2). The Redis counter is the atomic
+	// no-oversell gate; the Postgres reservation ledger is the source of truth; the
+	// reconciler releases TTL-expired holds back to the counter. The reserver is wired
+	// into both the engine (to reserve during authorize) and the server (capture/void).
+	holdStore := hold.NewPostgresStore(pg.Pool)
+	budgetCounter := budget.NewRedisCounter(rds.Client)
+	reserver := budget.NewReserver(budgetCounter, holdStore, cfg.HoldTTL)
+	reconciler := budget.NewReconciler(budgetCounter, holdStore, log, 0)
+
+	engineCore := engine.NewEngine(pol, signer.KeyID()).
+		WithSigner(signer).WithHoldTTL(cfg.HoldTTL).WithReserver(reserver)
 
 	// Control plane + bundle propagation (Task 2.2). When enabled, published policy
 	// versions serve per-org via an in-memory cache refreshed off the hot path; the
@@ -141,6 +152,9 @@ func main() {
 	// refresher. Boundary rule (TRD §3): the hot path reads only the local cache.
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 	defer bgCancel()
+
+	// Release TTL-expired budget holds off the hot path (Task 3.2).
+	go reconciler.Run(bgCtx, cfg.BudgetReconcileInterval)
 
 	var policySvc *policyctl.Service
 	var bundleProvider *bundle.Provider
@@ -209,9 +223,9 @@ func main() {
 	if policySvc != nil {
 		srv = srv.WithControlPlane(policySvc, bundleProvider, simulator)
 	}
-	// Two-phase budget holds (Task 3.1): Redis-backed, TTL auto-release. A budget-
-	// affecting APPROVE places a hold; capture/void commit or release it.
-	srv = srv.WithHolds(hold.NewRedisStore(rds.Client))
+	// Two-phase budget lifecycle (Task 3.1/3.2): capture/void settle the reservation
+	// the engine placed during authorize.
+	srv = srv.WithBudget(reserver)
 
 	httpSrv := &http.Server{
 		Addr:              cfg.Addr,

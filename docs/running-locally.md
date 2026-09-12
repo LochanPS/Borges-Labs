@@ -33,6 +33,7 @@ psql "$DATABASE_URL" -f deploy/migrations/0002_decisions.sql
 psql "$DATABASE_URL" -f deploy/migrations/0003_policies.sql
 psql "$DATABASE_URL" -f deploy/migrations/0004_org_active_bundles.sql
 psql "$DATABASE_URL" -f deploy/migrations/0005_api_keys_shadow.sql
+psql "$DATABASE_URL" -f deploy/migrations/0006_budget_reservations.sql
 ```
 
 Migrations 0003/0004 back the control plane (Task 2.2): policy authoring, immutable
@@ -45,11 +46,13 @@ keys default to shadow (`authz-keygen` mints advisory keys; pass `-enforce` for 
 enforcing key). A shadow key's decisions are evaluated and audited but returned
 `shadow:true` (plus an `X-Shadow: true` header) so the caller does not enforce them.
 
-Two-phase budget holds (Task 3.1, [docs/budget-holds.md](budget-holds.md)) are
-Redis-backed — no migration. A budget-affecting APPROVE places a hold; commit it with
-`POST /v1/authorize/{id}/capture` or release with `.../void`; an untouched hold
-auto-expires after `AUTHZ_HOLD_TTL` (default 15m). The reservation arithmetic
-(counters, no-oversell) lands in Task 3.2.
+Two-phase budget holds + enforcement (Task 3.1/3.2, [docs/budget-holds.md](budget-holds.md)):
+a budget-affecting APPROVE atomically reserves against a Redis counter (no oversell,
+migration 0006 is the Postgres source-of-truth ledger); commit with
+`POST /v1/authorize/{id}/capture`, release with `.../void`; an untouched hold
+auto-expires after `AUTHZ_HOLD_TTL` (default 15m) and the reconciler
+(`AUTHZ_BUDGET_RECONCILE_INTERVAL`, default 1m) releases it back to the counter. If
+Redis is down the budget predicate fails closed to REVIEW.
 
 The audit log (0002) is append-only and works without extra config — sensitive
 fields are stored as plaintext until you set `AUTHZ_AUDIT_ENCRYPTION_KEY` (a 32-byte

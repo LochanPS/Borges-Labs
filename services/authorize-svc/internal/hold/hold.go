@@ -48,6 +48,8 @@ type Hold struct {
 	OrgID      string    `json:"org_id"`
 	AgentID    string    `json:"agent_id"`
 	BudgetID   string    `json:"budget_id"`
+	Window     string    `json:"window"`      // day | month | rolling
+	WindowKey  string    `json:"window_key"`  // concrete period, e.g. 2026-09
 	Amount     string    `json:"amount"`
 	Currency   string    `json:"currency"`
 	State      State     `json:"state"`
@@ -84,8 +86,18 @@ func conflict(from State, action, reason string) *ConflictError {
 type Store interface {
 	Place(ctx context.Context, h *Hold) error
 	Capture(ctx context.Context, orgID, decisionID string) (*Hold, error)
-	Void(ctx context.Context, orgID, decisionID string) (*Hold, error)
+	// Void releases a held hold. released is true only when THIS call performed the
+	// held→voided transition, so the caller decrements the budget counter exactly once
+	// (an idempotent repeat or a void of an already-released hold reports released=false).
+	Void(ctx context.Context, orgID, decisionID string) (h *Hold, released bool, err error)
 	Get(ctx context.Context, orgID, decisionID string) (*Hold, error)
+	// ExpireDue transitions up to limit holds that are still held past their ExpiresAt
+	// to expired and returns exactly those it transitioned (so the reconciler releases
+	// each one's counter exactly once). Reservation source of truth for TTL release.
+	ExpireDue(ctx context.Context, now time.Time, limit int) ([]*Hold, error)
+	// ListActiveByWindow returns the held+captured holds for a budget window (used to
+	// rebuild a drifted counter from the source of truth).
+	ListActiveByWindow(ctx context.Context, orgID, budgetID, windowKey string) ([]*Hold, error)
 }
 
 // MemStore is an in-memory Store for hermetic tests. Expiry is evaluated against an
@@ -161,28 +173,63 @@ func (m *MemStore) Capture(_ context.Context, org, id string) (*Hold, error) {
 	return &out, nil
 }
 
-func (m *MemStore) Void(_ context.Context, org, id string) (*Hold, error) {
+func (m *MemStore) Void(_ context.Context, org, id string) (*Hold, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	h, ok := m.resolve(org, id)
 	if !ok {
-		return nil, ErrNotFound
+		return nil, false, ErrNotFound
 	}
+	released := false
 	switch h.State {
 	case StateHeld:
 		h.State = StateVoided
 		h.VoidedAt = m.now()
+		released = true // this call released the reservation → caller decrements the counter
 	case StateVoided:
 		// idempotent no-op
 	case StateExpired:
-		// already released by TTL; acknowledge the release as a void (idempotent)
+		// already released by the reconciler at TTL; acknowledge as voided, no re-release
 		h.State = StateVoided
 		h.VoidedAt = m.now()
 	case StateCaptured:
-		return nil, conflict(StateCaptured, "void", "the hold was already captured")
+		return nil, false, conflict(StateCaptured, "void", "the hold was already captured")
 	}
 	out := *h
-	return &out, nil
+	return &out, released, nil
+}
+
+// ExpireDue transitions held holds past their ExpiresAt to expired and returns them.
+func (m *MemStore) ExpireDue(_ context.Context, now time.Time, limit int) ([]*Hold, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []*Hold
+	for _, h := range m.holds {
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+		if h.State == StateHeld && !h.ExpiresAt.IsZero() && !now.Before(h.ExpiresAt) {
+			h.State = StateExpired
+			cp := *h
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
+// ListActiveByWindow returns the held+captured holds for a budget window.
+func (m *MemStore) ListActiveByWindow(_ context.Context, org, budgetID, windowKey string) ([]*Hold, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []*Hold
+	for _, h := range m.holds {
+		if h.OrgID == org && h.BudgetID == budgetID && h.WindowKey == windowKey &&
+			(h.State == StateHeld || h.State == StateCaptured) {
+			cp := *h
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
 }
 
 func (m *MemStore) Get(_ context.Context, org, id string) (*Hold, error) {

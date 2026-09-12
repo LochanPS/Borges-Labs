@@ -33,9 +33,12 @@ func TestVoid_ReleasesHeld(t *testing.T) {
 	m := NewMemStore()
 	ctx := context.Background()
 	m.Place(ctx, newHold("d1", time.Now().Add(time.Hour)))
-	h, err := m.Void(ctx, "org1", "d1")
+	h, released, err := m.Void(ctx, "org1", "d1")
 	if err != nil || h.State != StateVoided {
 		t.Fatalf("void: state=%v err=%v", h.State, err)
+	}
+	if !released {
+		t.Error("void of a held hold reported released=false; the counter would not be decremented")
 	}
 }
 
@@ -52,11 +55,11 @@ func TestCaptureVoid_Idempotent(t *testing.T) {
 	}
 
 	m.Place(ctx, newHold("d2", time.Now().Add(time.Hour)))
-	if _, err := m.Void(ctx, "org1", "d2"); err != nil {
-		t.Fatalf("void1: %v", err)
+	if _, released, err := m.Void(ctx, "org1", "d2"); err != nil || !released {
+		t.Fatalf("void1: released=%v err=%v", released, err)
 	}
-	if h, err := m.Void(ctx, "org1", "d2"); err != nil || h.State != StateVoided {
-		t.Errorf("void2 (idempotent): state=%v err=%v", h.State, err)
+	if h, released, err := m.Void(ctx, "org1", "d2"); err != nil || h.State != StateVoided || released {
+		t.Errorf("void2 (idempotent): state=%v released=%v err=%v (want no second release)", h.State, released, err)
 	}
 }
 
@@ -75,7 +78,7 @@ func TestConflictingTransitions(t *testing.T) {
 
 	m.Place(ctx, newHold("d2", time.Now().Add(time.Hour)))
 	m.Capture(ctx, "org1", "d2")
-	_, err = m.Void(ctx, "org1", "d2")
+	_, _, err = m.Void(ctx, "org1", "d2")
 	if !errors.As(err, &ce) {
 		t.Errorf("void-after-capture err = %v, want ConflictError", err)
 	}

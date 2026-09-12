@@ -97,13 +97,10 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Record the decision under its idempotency key BEFORE responding, so a retry
-	// that races the client's receipt still resolves to this decision.
+	// that races the client's receipt still resolves to this decision. The budget hold
+	// (if any) was already reserved+recorded inside the engine's Authorize, gated by the
+	// idempotency replay above so a retry never double-reserves.
 	s.saveIdempotent(r, req, decision)
-
-	// Place the budget hold (if this APPROVE is budget-affecting) BEFORE responding, so
-	// the caller can immediately capture/void it. Only on the fresh path — an idempotent
-	// replay's hold already exists (and Place is idempotent regardless).
-	s.placeHold(r, req, decision, orgID)
 
 	w.Header().Set("X-Decision-Id", decision.DecisionID)
 	if decision.Shadow {

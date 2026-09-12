@@ -68,6 +68,55 @@ func TestAuthorize_ShadowBudgetApproveHasNoObligation(t *testing.T) {
 	}
 }
 
+// fakeReserver returns a fixed outcome, to exercise how the engine folds the budget
+// result into the verdict.
+type fakeReserver struct{ outcome BudgetOutcome }
+
+func (f fakeReserver) Reserve(_ context.Context, _, _ string, _ contractsv1.AuthorizeRequest, _ BudgetDecl) BudgetResult {
+	return BudgetResult{Outcome: f.outcome, SpendToDate: "10.00", Limit: "50000.00", WindowKey: "2026-08"}
+}
+
+// The reserver's outcome folds into the verdict: WithinLimit→APPROVE(+hold),
+// Exceeded→DENY, Unavailable→REVIEW (fail closed). Local rules already approve here.
+func TestAuthorize_ReserverFoldsIntoVerdict(t *testing.T) {
+	cases := []struct {
+		outcome BudgetOutcome
+		want    contractsv1.Verdict
+		hold    bool
+	}{
+		{BudgetWithinLimit, contractsv1.VerdictApprove, true},
+		{BudgetExceeded, contractsv1.VerdictDeny, false},
+		{BudgetUnavailable, contractsv1.VerdictReview, false},
+	}
+	for _, c := range cases {
+		e := NewEngine(budgetPolicy(), "k").WithReserver(fakeReserver{c.outcome})
+		d, err := e.Authorize(context.Background(), "org1", baseReq(), false)
+		if err != nil {
+			t.Fatalf("authorize: %v", err)
+		}
+		if d.Verdict != c.want {
+			t.Errorf("outcome %v: verdict = %s, want %s", c.outcome, d.Verdict, c.want)
+		}
+		_, hasHold := findOb(d.Obligations, contractsv1.ObligationCaptureWithin)
+		if hasHold != c.hold {
+			t.Errorf("outcome %v: hold obligation = %v, want %v", c.outcome, hasHold, c.hold)
+		}
+		// A budget matched-rule is always present when a budget applied.
+		if _, ok := findMatched(d.Explanation.MatchedRules, contractsv1.TypeRollingBudget); !ok {
+			t.Errorf("outcome %v: no rolling_budget matched rule", c.outcome)
+		}
+	}
+}
+
+func findMatched(rules []contractsv1.MatchedRule, typ contractsv1.PredicateType) (contractsv1.MatchedRule, bool) {
+	for _, r := range rules {
+		if r.Type == typ {
+			return r, true
+		}
+	}
+	return contractsv1.MatchedRule{}, false
+}
+
 // A DENY places no hold even under a budget policy.
 func TestAuthorize_BudgetDenyHasNoObligation(t *testing.T) {
 	e := NewEngine(budgetPolicy(), "k")

@@ -20,7 +20,6 @@ import (
 
 	"github.com/trust-infra/authorize-svc/internal/audit"
 	"github.com/trust-infra/authorize-svc/internal/auth"
-	"github.com/trust-infra/authorize-svc/internal/hold"
 	"github.com/trust-infra/authorize-svc/internal/policyctl"
 	"github.com/trust-infra/authorize-svc/internal/ratelimit"
 	contractsv1 "github.com/trust-infra/contracts/gen/go/contractsv1"
@@ -80,9 +79,9 @@ type Server struct {
 	bundleInvalidator policyBundleInvalidator
 	simulator         policySimulator
 
-	// holds, when set, backs the two-phase budget lifecycle (Task 3.1): a budget-
-	// affecting APPROVE places a hold and capture/void transition it.
-	holds hold.Store
+	// budget, when set, backs the two-phase budget lifecycle (Task 3.1/3.2): the engine
+	// reserves during authorize, and capture/void settle the reservation here.
+	budget budgetLifecycle
 }
 
 // IdempotencyStore caches a decision by (org, idempotency_key). Implementations:

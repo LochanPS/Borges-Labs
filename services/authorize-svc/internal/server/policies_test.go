@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/trust-infra/authorize-svc/internal/auth"
+	"github.com/trust-infra/authorize-svc/internal/budget"
 	"github.com/trust-infra/authorize-svc/internal/bundle"
 	"github.com/trust-infra/authorize-svc/internal/engine"
 	"github.com/trust-infra/authorize-svc/internal/hold"
@@ -59,16 +60,19 @@ func newCPHarness(t *testing.T) *cpHarness {
 	svc := policyctl.NewService(store, signer)
 	provider := bundle.NewProvider(store, log, time.Second)
 	sim := bundle.NewSimulator(store)
+	// Budget enforcement: in-memory counter + reservation ledger (Task 3.2).
+	reserver := budget.NewReserver(budget.NewMemCounter(), hold.NewMemStore(), 15*time.Minute)
 	// Provider set, no static boot policy → an org with no published bundle 503s until
 	// it publishes (which is exactly what the publish→decision test exercises).
-	authz := engine.NewEngine(engine.Policy{}, signer.KeyID()).WithSigner(signer).WithProvider(provider)
+	authz := engine.NewEngine(engine.Policy{}, signer.KeyID()).
+		WithSigner(signer).WithProvider(provider).WithReserver(reserver)
 
 	generous := ratelimit.TierTable{"default": {PerMinute: 1_000_000, PerSecond: 1_000_000}}
 	srv := New(log, BuildInfo{Version: "test"}, authz, testAuthn(keys), testLimiter(), generous,
 		Check{Name: "postgres", Ping: okPing},
 	).WithKeys(func() any { return keyring.JWKS() }).
 		WithControlPlane(svc, provider, sim).
-		WithHolds(hold.NewMemStore()).
+		WithBudget(reserver).
 		WithIdempotency(idempotency.NewMem())
 
 	ts := httptest.NewServer(srv.Handler())
