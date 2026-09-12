@@ -113,8 +113,9 @@ the decision plane for MVP (A2#2) and split into policy-svc at Phase 5.
 | `POST /v1/policies/{id}/simulate` | dry-run a version (or the draft) against a batch of requests (Task 2.3) |
 | `GET /v1/policies/active` | the org's currently serving version (A#4) |
 
-> Not yet in `contracts/openapi.v1.yaml` — a follow-up adds these paths + the policy
-> schema to the OpenAPI document so SDK types generate from them.
+These paths are in `contracts/openapi.v1.yaml` (operations `createPolicy`, `getPolicy`,
+`updatePolicy`, `publishPolicy`, `rollbackPolicy`, `listPolicyVersions`,
+`simulatePolicy`, `getActivePolicy`), so SDK types generate from them.
 
 ## Bundle propagation (Task 2.2, A#4)
 

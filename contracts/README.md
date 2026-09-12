@@ -8,17 +8,21 @@ additively; breaking changes go to `/v2` with `/v1` maintained.
 
 ```
 contracts/
-  openapi.v1.yaml                 HTTP surface (OpenAPI 3.1)
+  openapi.v1.yaml                 HTTP surface (OpenAPI 3.1): decision plane +
+                                   control plane (/v1/policies …, incl. simulate)
   schemas/
     common.schema.json            shared defs: Money, Target, Counter(Snapshot),
                                    MatchedRule, Obligation, Signature, ULID, ...
     authorize-request.schema.json POST /v1/authorize body
     decision.schema.json          Decision (response + stored audit record)
+    policy.schema.json            Policy document (control plane; $defs/Rule is the
+                                   shared rule shape openapi.v1.yaml references)
     error.schema.json             RFC 7807 problem+json
   examples/
     authorize-request.example.json
     decision-approve.example.json
     decision-deny.example.json
+    policy.example.json
   gen/go/                         generated Go structs (module
                                   github.com/trust-infra/contracts/gen/go)
   tools/validate.py               contract test: schemas + examples + OpenAPI

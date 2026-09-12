@@ -40,6 +40,8 @@ tags:
     description: Audit read path.
   - name: keys
     description: Public verification keys.
+  - name: control-plane
+    description: Policy authoring, versioning, publish, rollback, and simulate. Not in the payment hot path (TRD §3).
   - name: system
     description: Health and liveness.
 security:
@@ -79,6 +81,11 @@ paths:
             X-Decision-Id:
               description: The decision_id, mirrored for logging/correlation.
               schema: { type: string }
+            X-Shadow:
+              description: |
+                Present and "true" when the decision is advisory (a shadow-mode key):
+                the caller must NOT enforce it. Mirrors the signed `shadow` field.
+              schema: { type: string, enum: ["true"] }
           content:
             application/json:
               schema:
@@ -187,6 +194,219 @@ paths:
                     description: Cursor for the next page, or null when exhausted.
         "401":
           $ref: "#/components/responses/Unauthorized"
+  /v1/policies:
+    post:
+      tags: [control-plane]
+      operationId: createPolicy
+      summary: Create a draft policy.
+      description: |
+        Creates a draft policy owned by the caller's org (taken from the API key, never
+        the body). Rules are validated authoritatively at publish, so a draft may be a
+        work in progress.
+      parameters:
+        - $ref: "#/components/parameters/ApiKey"
+        - $ref: "#/components/parameters/Signature"
+        - $ref: "#/components/parameters/Nonce"
+        - $ref: "#/components/parameters/Timestamp"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PolicyWriteRequest" }
+      responses:
+        "201":
+          description: The created draft policy.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Policy" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/policies/active:
+    get:
+      tags: [control-plane]
+      operationId: getActivePolicy
+      summary: The org's currently serving policy version.
+      description: |
+        Returns the version the org's decision plane is serving (ROADMAP A#4). Reads
+        control-plane state, so it reflects a publish immediately; the decision plane
+        converges to it within the bundle-refresh window.
+      parameters:
+        - $ref: "#/components/parameters/ApiKey"
+        - $ref: "#/components/parameters/Signature"
+        - $ref: "#/components/parameters/Nonce"
+        - $ref: "#/components/parameters/Timestamp"
+      responses:
+        "200":
+          description: The active bundle pointer.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BundleRef" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/policies/{id}:
+    get:
+      tags: [control-plane]
+      operationId: getPolicy
+      summary: Fetch a policy's working copy.
+      parameters:
+        - $ref: "#/components/parameters/PolicyId"
+        - $ref: "#/components/parameters/ApiKey"
+        - $ref: "#/components/parameters/Signature"
+        - $ref: "#/components/parameters/Nonce"
+        - $ref: "#/components/parameters/Timestamp"
+      responses:
+        "200":
+          description: The policy's current working copy.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Policy" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [control-plane]
+      operationId: updatePolicy
+      summary: Replace a policy's working-copy fields.
+      description: |
+        Edits the draft (name, agents, rules). Does not publish and does not change the
+        active version — the previously published version keeps serving until the next
+        publish.
+      parameters:
+        - $ref: "#/components/parameters/PolicyId"
+        - $ref: "#/components/parameters/ApiKey"
+        - $ref: "#/components/parameters/Signature"
+        - $ref: "#/components/parameters/Nonce"
+        - $ref: "#/components/parameters/Timestamp"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PolicyWriteRequest" }
+      responses:
+        "200":
+          description: The updated working copy.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Policy" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/policies/{id}/publish:
+    post:
+      tags: [control-plane]
+      operationId: publishPolicy
+      summary: Validate, version, sign, and publish a policy.
+      description: |
+        Validates the working copy, mints an immutable content-hash version
+        (`polv_<sha256>`), Ed25519-signs it, stores it, and designates it the org's
+        active bundle. Republishing byte-identical content is idempotent (same hash).
+        An invalid policy is rejected 422 with field-level problems.
+      parameters:
+        - $ref: "#/components/parameters/PolicyId"
+        - $ref: "#/components/parameters/ApiKey"
+        - $ref: "#/components/parameters/Signature"
+        - $ref: "#/components/parameters/Nonce"
+        - $ref: "#/components/parameters/Timestamp"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PublishRequest" }
+      responses:
+        "200":
+          description: The published, signed version.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PolicyVersion" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+  /v1/policies/{id}/rollback:
+    post:
+      tags: [control-plane]
+      operationId: rollbackPolicy
+      summary: Restore a prior version by re-pointing the active bundle.
+      description: |
+        Re-points the org's active bundle at an existing version hash and resets the
+        working copy to that version's content (TRD §6). Content-addressed and
+        immutable, so no new version is created.
+      parameters:
+        - $ref: "#/components/parameters/PolicyId"
+        - $ref: "#/components/parameters/ApiKey"
+        - $ref: "#/components/parameters/Signature"
+        - $ref: "#/components/parameters/Nonce"
+        - $ref: "#/components/parameters/Timestamp"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RollbackRequest" }
+      responses:
+        "200":
+          description: The reinstated version.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PolicyVersion" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/policies/{id}/versions:
+    get:
+      tags: [control-plane]
+      operationId: listPolicyVersions
+      summary: List a policy's immutable versions (newest first).
+      parameters:
+        - $ref: "#/components/parameters/PolicyId"
+        - $ref: "#/components/parameters/ApiKey"
+        - $ref: "#/components/parameters/Signature"
+        - $ref: "#/components/parameters/Nonce"
+        - $ref: "#/components/parameters/Timestamp"
+      responses:
+        "200":
+          description: The policy's versions, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/PolicyVersion" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/policies/{id}/simulate:
+    post:
+      tags: [control-plane]
+      operationId: simulatePolicy
+      summary: Dry-run a policy version (or the draft) against a batch of requests.
+      description: |
+        Evaluates each supplied request against a target policy version (`version_hash`)
+        or, when omitted, the current working-copy draft. Returns per-request would-be
+        decisions — all marked `shadow: true`, UNSIGNED, and never persisted. A request's
+        own `evaluated_at` is honored (replaying historical traffic).
+      parameters:
+        - $ref: "#/components/parameters/PolicyId"
+        - $ref: "#/components/parameters/ApiKey"
+        - $ref: "#/components/parameters/Signature"
+        - $ref: "#/components/parameters/Nonce"
+        - $ref: "#/components/parameters/Timestamp"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SimulateRequest" }
+      responses:
+        "200":
+          description: Per-request would-be verdicts.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SimulateResponse" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
   /v1/keys/public:
     get:
       tags: [keys]
@@ -296,6 +516,12 @@ components:
         Optional transport mirror of the body `idempotency_key`. When both are present they
         must match. Makes authorize retry-safe.
       schema: { type: string, minLength: 8, maxLength: 128 }
+    PolicyId:
+      name: id
+      in: path
+      required: true
+      description: The policy id (`pol_<ULID>`).
+      schema: { type: string, minLength: 1 }
   responses:
     ValidationError:
       description: Malformed request (schema/shape).
@@ -341,3 +567,130 @@ components:
       content:
         application/problem+json:
           schema: { $ref: "./schemas/error.schema.json" }
+  schemas:
+    PolicyWriteRequest:
+      type: object
+      description: |
+        Body for create/update. The org is taken from the API key, never the body; rules
+        reuse the frozen policy rule shape. Validated authoritatively at publish.
+      additionalProperties: false
+      required: [name, rules]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 256 }
+        agents:
+          type: array
+          description: Agents this policy targets; empty/omitted = every agent in the org.
+          items: { type: string, minLength: 1, maxLength: 128 }
+        rules:
+          type: array
+          minItems: 1
+          items: { $ref: "./schemas/policy.schema.json#/$defs/Rule" }
+    Policy:
+      type: object
+      description: A policy's mutable working copy plus its active-version pointer.
+      additionalProperties: false
+      required: [id, org_id, name, agents, rules, status, created_at, updated_at]
+      properties:
+        id: { type: string, description: "pol_<ULID>." }
+        org_id: { type: string }
+        name: { type: string }
+        agents:
+          type: array
+          items: { type: string }
+        rules:
+          type: array
+          items: { $ref: "./schemas/policy.schema.json#/$defs/Rule" }
+        status: { type: string, enum: [draft, published] }
+        active_version_hash:
+          type: string
+          description: The version currently serving; absent until the first publish.
+        created_at: { $ref: "./schemas/common.schema.json#/$defs/Timestamp" }
+        updated_at: { $ref: "./schemas/common.schema.json#/$defs/Timestamp" }
+    PolicySignature:
+      type: object
+      description: |
+        Ed25519 signature over a policy version's canonical bytes (scheme
+        `ti-policy-canon/1`). Verifiable against the same public keys as decision
+        signatures (`GET /v1/keys/public`). Distinct from the decision-receipt
+        canonicalization.
+      additionalProperties: false
+      required: [algorithm, key_id, value, canonicalization]
+      properties:
+        algorithm: { type: string, const: Ed25519 }
+        key_id: { type: string, minLength: 1 }
+        value: { type: string, pattern: "^[A-Za-z0-9_-]+$", description: base64url (unpadded). }
+        canonicalization: { type: string, const: "ti-policy-canon/1" }
+    PolicyVersion:
+      type: object
+      description: An immutable, content-addressed, Ed25519-signed snapshot of a policy at publish time.
+      additionalProperties: false
+      required: [version_hash, policy_id, org_id, name, agents, rules, signature, author, published_at]
+      properties:
+        version_hash: { type: string, description: "polv_<sha256>: content hash of identity + rules." }
+        policy_id: { type: string }
+        org_id: { type: string }
+        name: { type: string }
+        agents:
+          type: array
+          items: { type: string }
+        rules:
+          type: array
+          items: { $ref: "./schemas/policy.schema.json#/$defs/Rule" }
+        signature: { $ref: "#/components/schemas/PolicySignature" }
+        author: { type: string }
+        parent_hash:
+          type: string
+          description: The version this one superseded at publish; absent for the first version.
+        published_at: { $ref: "./schemas/common.schema.json#/$defs/Timestamp" }
+    BundleRef:
+      type: object
+      description: The per-org active-bundle pointer (which published version is serving).
+      additionalProperties: false
+      required: [org_id, policy_id, version_hash, updated_at]
+      properties:
+        org_id: { type: string }
+        policy_id: { type: string }
+        version_hash: { type: string }
+        updated_at: { $ref: "./schemas/common.schema.json#/$defs/Timestamp" }
+    PublishRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        author:
+          type: string
+          description: Optional provenance label; defaults to the authenticated key id.
+    RollbackRequest:
+      type: object
+      additionalProperties: false
+      required: [version_hash]
+      properties:
+        version_hash: { type: string, description: The prior version hash to reinstate. }
+    SimulateRequest:
+      type: object
+      additionalProperties: false
+      required: [requests]
+      properties:
+        version_hash:
+          type: string
+          description: Published version to dry-run; omit to evaluate the working-copy draft.
+        requests:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items: { $ref: "./schemas/authorize-request.schema.json" }
+    SimulateResponse:
+      type: object
+      additionalProperties: false
+      required: [version_hash, shadow, results]
+      properties:
+        version_hash:
+          type: string
+          description: The version label evaluated (`polv_…`, or `draft:<policy_id>`).
+        shadow:
+          type: boolean
+          const: true
+          description: Always true — simulation results are advisory and never enforceable.
+        results:
+          type: array
+          description: Unsigned would-be decisions, one per request, in order.
+          items: { $ref: "./schemas/decision.schema.json" }
