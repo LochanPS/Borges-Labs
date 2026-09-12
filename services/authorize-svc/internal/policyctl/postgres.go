@@ -157,6 +157,31 @@ func (s *PostgresStore) ListVersions(ctx context.Context, orgID, policyID string
 	return out, nil
 }
 
+func (s *PostgresStore) SetActiveBundle(ctx context.Context, ref *BundleRef) error {
+	const q = `
+		INSERT INTO org_active_bundles (org_id, policy_id, version_hash, updated_at)
+		VALUES ($1,$2,$3,$4)
+		ON CONFLICT (org_id) DO UPDATE
+		SET policy_id=EXCLUDED.policy_id, version_hash=EXCLUDED.version_hash, updated_at=EXCLUDED.updated_at`
+	if _, err := s.pool.Exec(ctx, q, ref.OrgID, ref.PolicyID, ref.VersionHash, ref.UpdatedAt); err != nil {
+		return fmt.Errorf("policyctl: set active bundle: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStore) GetActiveBundle(ctx context.Context, orgID string) (*BundleRef, error) {
+	const q = `SELECT org_id, policy_id, version_hash, updated_at FROM org_active_bundles WHERE org_id=$1`
+	var b BundleRef
+	err := s.pool.QueryRow(ctx, q, orgID).Scan(&b.OrgID, &b.PolicyID, &b.VersionHash, &b.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrBundleNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("policyctl: get active bundle: %w", err)
+	}
+	return &b, nil
+}
+
 type rowScanner interface {
 	Scan(dest ...any) error
 }

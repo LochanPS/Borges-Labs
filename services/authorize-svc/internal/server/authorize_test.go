@@ -22,11 +22,11 @@ import (
 // through the real HTTP surface.
 type testAuthorizer struct{}
 
-func (testAuthorizer) Authorize(ctx context.Context, req contractsv1.AuthorizeRequest) (contractsv1.Decision, error) {
+func (testAuthorizer) Authorize(ctx context.Context, orgID string, req contractsv1.AuthorizeRequest) (contractsv1.Decision, error) {
 	return engine.Stub{
 		PolicyVersionHash: "pol_test_0000000000000000000000000000000000000000000000000000000000000000",
 		SigningKeyID:      "azn-sign-test",
-	}.Authorize(ctx, req)
+	}.Authorize(ctx, orgID, req)
 }
 
 // --- contract schema loading -------------------------------------------------

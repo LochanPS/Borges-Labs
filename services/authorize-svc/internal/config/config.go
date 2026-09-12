@@ -35,6 +35,20 @@ type Config struct {
 	IdempotencyTTL time.Duration
 	// SigningKeyID names the Ed25519 key a decision is signed under (TRD §11).
 	SigningKeyID string
+	// --- control plane / bundle propagation (Task 2.2) ---
+
+	// ControlPlaneEnabled mounts the /v1/policies authoring endpoints and wires the
+	// per-org bundle provider into the engine. Default true. Disable to run a pure
+	// decision node that only serves the static boot policy (file/GitOps mode).
+	ControlPlaneEnabled bool
+	// BundleRefreshTTL is how often the decision plane re-reads each org's active
+	// version to converge on cross-instance publishes (A#4). Same-process publishes
+	// converge immediately via cache invalidation.
+	BundleRefreshTTL time.Duration
+	// BundleLoadTimeout bounds a cold-miss / refresh bundle load so a slow control-plane
+	// store cannot stall the first request for an org.
+	BundleLoadTimeout time.Duration
+
 	// SigningPrivateKey is the base64 (std or url) 32-byte Ed25519 seed the decision
 	// signer loads (Task 1.5). Empty in dev => a key is generated at boot and its
 	// public half is published at /v1/keys/public. Production supplies this from the
@@ -90,7 +104,10 @@ func Load() Config {
 		PolicyVersionHash: env("AUTHZ_POLICY_VERSION", "pol_stub_0000000000000000000000000000000000000000000000000000000000000000"),
 		PolicyFile:        env("AUTHZ_POLICY_FILE", ""),
 		IdempotencyTTL:    envDuration("AUTHZ_IDEMPOTENCY_TTL", 24*time.Hour),
-		SigningKeyID:      env("AUTHZ_SIGNING_KEY_ID", "azn-sign-dev"),
+		ControlPlaneEnabled: envBool("AUTHZ_CONTROL_PLANE_ENABLED", true),
+		BundleRefreshTTL:    envDuration("AUTHZ_BUNDLE_REFRESH_TTL", 5*time.Second),
+		BundleLoadTimeout:   envDuration("AUTHZ_BUNDLE_LOAD_TIMEOUT", 2*time.Second),
+		SigningKeyID:        env("AUTHZ_SIGNING_KEY_ID", "azn-sign-dev"),
 		SigningPrivateKey: env("AUTHZ_SIGNING_PRIVATE_KEY", ""),
 		HMACMaxSkew:       envDuration("AUTHZ_HMAC_MAX_SKEW", 5*time.Minute),
 		NonceTTL:          envDuration("AUTHZ_NONCE_TTL", 10*time.Minute),
@@ -108,6 +125,15 @@ func Load() Config {
 			"enterprise": 7 * 365 * 24 * time.Hour,
 		},
 	}
+}
+
+func envBool(key string, def bool) bool {
+	if v, ok := os.LookupEnv(key); ok && v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
+		}
+	}
+	return def
 }
 
 func envInt(key string, def int) int {

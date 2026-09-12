@@ -77,7 +77,14 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	decision, err := s.authz.Authorize(r.Context(), req)
+	// Org scoping: the active policy bundle is resolved per org (Task 2.2). The org
+	// comes from the authenticated key, never from the request body.
+	var orgID string
+	if principal, ok := principalOf(r); ok {
+		orgID = principal.OrgID
+	}
+
+	decision, err := s.authz.Authorize(r.Context(), orgID, req)
 	if err != nil {
 		reqLogger(r).Error("authorize failed", "err", err)
 		s.writeProblem(w, r, http.StatusServiceUnavailable, codeInternal,

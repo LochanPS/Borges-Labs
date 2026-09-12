@@ -96,9 +96,49 @@ and the public key published at `GET /v1/keys/public` — no shared secret. See
   version's content. Because versions are content-addressed and immutable, **no new row
   is created** — the prior signed version is reinstated exactly.
 
+## HTTP API (Task 2.2)
+
+Control-plane endpoints, org-scoped by the authenticated API key (RFC 7807 errors; a
+`ValidationError` is `422` with field-level `errors[]`). They live in the same binary as
+the decision plane for MVP (A2#2) and split into policy-svc at Phase 5.
+
+| Method + path | Action |
+|---|---|
+| `POST /v1/policies` | create a draft |
+| `GET /v1/policies/{id}` | read the working copy |
+| `PUT /v1/policies/{id}` | edit the working copy |
+| `POST /v1/policies/{id}/publish` | validate → version → sign → store; set active |
+| `POST /v1/policies/{id}/rollback` | `{version_hash}` → re-point active at a prior version |
+| `GET /v1/policies/{id}/versions` | list versions, newest-first |
+| `GET /v1/policies/active` | the org's currently serving version (A#4) |
+
+> Not yet in `contracts/openapi.v1.yaml` — a follow-up adds these paths + the policy
+> schema to the OpenAPI document so SDK types generate from them.
+
+## Bundle propagation (Task 2.2, A#4)
+
+The decision plane never calls the control plane synchronously (TRD §3). Instead
+[`internal/bundle.Provider`](../services/authorize-svc/internal/bundle/bundle.go) holds
+each org's compiled active bundle in a process-local cache:
+
+- **Hot path** reads the cache only. A cold miss does one bounded load, then it's pure
+  cache.
+- **Convergence.** A same-process publish/rollback calls `Invalidate` → immediate. A
+  publish on another instance converges within `AUTHZ_BUNDLE_REFRESH_TTL` (default 5s)
+  via the background refresher.
+- **Last-known-good.** If the control-plane store is unreachable on refresh, the cached
+  bundle keeps serving (§21) — decisions continue, edits pause. No servable bundle and
+  no cache → controlled 503, never a guessed verdict.
+- **Fallback.** With a static boot policy configured (`AUTHZ_POLICY_FILE`), an org that
+  has never published falls back to it instead of 503 (file/GitOps mode, Task 1.7).
+
+Each decision cites the exact `polv_` version hash it was evaluated under.
+
 ## Storage
 
 [`deploy/migrations/0003_policies.sql`](../deploy/migrations/0003_policies.sql):
 `policies` (mutable working copy + active pointer) and `policy_versions` (immutable,
 append-only, signed). The application role should be granted only `INSERT`/`SELECT` on
 `policy_versions` (commented `REVOKE`/`GRANT` in the migration).
+[`0004_org_active_bundles.sql`](../deploy/migrations/0004_org_active_bundles.sql): the
+mutable per-org active-bundle pointer the decision plane converges to.

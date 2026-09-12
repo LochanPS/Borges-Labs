@@ -128,6 +128,9 @@ func (s *Service) Publish(ctx context.Context, orgID, id, author string) (*Versi
 		if aerr := s.setActive(ctx, p, existing.VersionHash); aerr != nil {
 			return nil, aerr
 		}
+		if aerr := s.pointOrgBundle(ctx, p.OrgID, p.ID, existing.VersionHash); aerr != nil {
+			return nil, aerr
+		}
 		return existing, nil
 	} else if !errors.Is(gerr, ErrVersionNotFound) {
 		return nil, gerr
@@ -149,6 +152,9 @@ func (s *Service) Publish(ctx context.Context, orgID, id, author string) (*Versi
 		return nil, err
 	}
 	if err := s.setActive(ctx, p, hash); err != nil {
+		return nil, err
+	}
+	if err := s.pointOrgBundle(ctx, p.OrgID, p.ID, hash); err != nil {
 		return nil, err
 	}
 	return v, nil
@@ -200,7 +206,26 @@ func (s *Service) Rollback(ctx context.Context, orgID, id, versionHash string) (
 	if err := s.store.UpdatePolicy(ctx, p); err != nil {
 		return nil, err
 	}
+	if err := s.pointOrgBundle(ctx, p.OrgID, p.ID, target.VersionHash); err != nil {
+		return nil, err
+	}
 	return target, nil
+}
+
+// ActiveBundle returns the org's currently serving bundle pointer (Task 2.2), or
+// ErrBundleNotFound if the org has never published.
+func (s *Service) ActiveBundle(ctx context.Context, orgID string) (*BundleRef, error) {
+	return s.store.GetActiveBundle(ctx, orgID)
+}
+
+// pointOrgBundle designates (org → version) as the org's active serving bundle.
+func (s *Service) pointOrgBundle(ctx context.Context, orgID, policyID, versionHash string) error {
+	return s.store.SetActiveBundle(ctx, &BundleRef{
+		OrgID:       orgID,
+		PolicyID:    policyID,
+		VersionHash: versionHash,
+		UpdatedAt:   s.now(),
+	})
 }
 
 // setActive marks the working copy published and pointing at hash.

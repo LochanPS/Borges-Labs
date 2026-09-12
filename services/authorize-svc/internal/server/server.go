@@ -20,6 +20,7 @@ import (
 
 	"github.com/trust-infra/authorize-svc/internal/audit"
 	"github.com/trust-infra/authorize-svc/internal/auth"
+	"github.com/trust-infra/authorize-svc/internal/policyctl"
 	"github.com/trust-infra/authorize-svc/internal/ratelimit"
 	contractsv1 "github.com/trust-infra/contracts/gen/go/contractsv1"
 )
@@ -41,7 +42,7 @@ type Check struct {
 // server depends only on this seam; the engine (stub today, real next) implements
 // it. Keeping it an interface is what keeps the handler thin and swappable.
 type Authorizer interface {
-	Authorize(context.Context, contractsv1.AuthorizeRequest) (contractsv1.Decision, error)
+	Authorize(ctx context.Context, orgID string, req contractsv1.AuthorizeRequest) (contractsv1.Decision, error)
 }
 
 // Server holds handler dependencies.
@@ -70,6 +71,12 @@ type Server struct {
 	// request returns the same decision (Task 1.7). Best-effort: a cache miss or
 	// error never blocks a decision.
 	idem IdempotencyStore
+
+	// Control plane (Task 2.2). When policySvc is set the /v1/policies endpoints are
+	// mounted; bundleInvalidator (optional) forces the decision plane's cached bundle
+	// to converge immediately after a same-process publish/rollback.
+	policySvc         *policyctl.Service
+	bundleInvalidator policyBundleInvalidator
 }
 
 // IdempotencyStore caches a decision by (org, idempotency_key). Implementations:
@@ -132,6 +139,19 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/decisions/{id}", s.method(http.MethodGet, getDecision.ServeHTTP))
 	listDecisions := s.authenticate(s.rateLimit(http.HandlerFunc(s.handleListDecisions)))
 	mux.HandleFunc("/v1/decisions", s.method(http.MethodGet, listDecisions.ServeHTTP))
+	// Control-plane policy endpoints (Task 2.2), mounted only when the control plane is
+	// wired. Authenticated + rate-limited + org-scoped like the decisions read path.
+	// The collection and item paths dispatch by method internally (thin 405s); the rest
+	// are single-method. Go's mux prefers the literal /active over the {id} wildcard.
+	if s.policySvc != nil {
+		cp := func(h http.HandlerFunc) http.Handler { return s.authenticate(s.rateLimit(h)) }
+		mux.Handle("/v1/policies", cp(s.handlePolicies))
+		mux.Handle("/v1/policies/active", s.method(http.MethodGet, cp(s.handleActiveBundle).ServeHTTP))
+		mux.Handle("/v1/policies/{id}", cp(s.handlePolicyItem))
+		mux.Handle("/v1/policies/{id}/publish", s.method(http.MethodPost, cp(s.handlePublishPolicy).ServeHTTP))
+		mux.Handle("/v1/policies/{id}/rollback", s.method(http.MethodPost, cp(s.handleRollbackPolicy).ServeHTTP))
+		mux.Handle("/v1/policies/{id}/versions", s.method(http.MethodGet, cp(s.handleListVersions).ServeHTTP))
+	}
 	mux.HandleFunc("/v1/keys/public", s.method(http.MethodGet, s.handleKeysPublic))
 	mux.HandleFunc("/v1/health", s.method(http.MethodGet, s.handleHealth))
 	// Convenience alias for infra probes that hit the bare path.

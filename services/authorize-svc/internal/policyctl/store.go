@@ -13,6 +13,7 @@ var (
 	ErrPolicyNotFound  = errors.New("policyctl: policy not found")
 	ErrVersionNotFound = errors.New("policyctl: version not found")
 	ErrPolicyExists    = errors.New("policyctl: policy id already exists")
+	ErrBundleNotFound  = errors.New("policyctl: no active bundle for org")
 )
 
 // Store persists the mutable policy working copies and the immutable, content-addressed
@@ -30,6 +31,11 @@ type Store interface {
 	PutVersion(ctx context.Context, v *Version) (created bool, err error)
 	GetVersion(ctx context.Context, orgID, policyID, versionHash string) (*Version, error)
 	ListVersions(ctx context.Context, orgID, policyID string) ([]*Version, error)
+
+	// SetActiveBundle points an org's decision plane at a published version (upsert).
+	// GetActiveBundle returns it, or ErrBundleNotFound if the org has never published.
+	SetActiveBundle(ctx context.Context, ref *BundleRef) error
+	GetActiveBundle(ctx context.Context, orgID string) (*BundleRef, error)
 }
 
 // Both stores satisfy Store.
@@ -41,9 +47,10 @@ var (
 // MemStore is an in-memory Store for hermetic tests.
 type MemStore struct {
 	mu       sync.Mutex
-	policies map[string]*Policy              // key: org|id
-	versions map[string][]*Version           // key: org|policyID, insertion order
-	seen     map[string]map[string]*Version  // key: org|policyID -> versionHash -> version
+	policies map[string]*Policy             // key: org|id
+	versions map[string][]*Version          // key: org|policyID, insertion order
+	seen     map[string]map[string]*Version // key: org|policyID -> versionHash -> version
+	bundles  map[string]*BundleRef          // key: orgID -> active bundle
 }
 
 // NewMemStore builds an empty in-memory store.
@@ -52,6 +59,7 @@ func NewMemStore() *MemStore {
 		policies: make(map[string]*Policy),
 		versions: make(map[string][]*Version),
 		seen:     make(map[string]map[string]*Version),
+		bundles:  make(map[string]*BundleRef),
 	}
 }
 
@@ -132,4 +140,22 @@ func (m *MemStore) ListVersions(_ context.Context, orgID, policyID string) ([]*V
 	// Newest first (most recently published).
 	sort.SliceStable(out, func(i, j int) bool { return out[i].PublishedAt.After(out[j].PublishedAt) })
 	return out, nil
+}
+
+func (m *MemStore) SetActiveBundle(_ context.Context, ref *BundleRef) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cp := *ref
+	m.bundles[ref.OrgID] = &cp
+	return nil
+}
+
+func (m *MemStore) GetActiveBundle(_ context.Context, orgID string) (*BundleRef, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if b, ok := m.bundles[orgID]; ok {
+		cp := *b
+		return &cp, nil
+	}
+	return nil, ErrBundleNotFound
 }

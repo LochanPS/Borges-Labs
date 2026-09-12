@@ -22,6 +22,7 @@ const (
 	codeReplayDetected   = "replay_detected"
 	codeAuthUnavailable  = "auth_unavailable"
 	codeRateLimited      = "rate_limited"
+	codeConflict         = "conflict"
 )
 
 // writeProblem emits an RFC 7807 problem+json response. `instance` is anchored to

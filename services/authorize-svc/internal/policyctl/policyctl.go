@@ -111,6 +111,18 @@ type Policy struct {
 	UpdatedAt         time.Time `json:"updated_at"`
 }
 
+// BundleRef names the single published version currently serving an org's decision
+// plane (the "active bundle" — Task 2.2, one-active-per-org MVP model). Publishing or
+// rolling back a policy points the org's bundle at that version; the decision plane
+// converges to it (immediately in-process, within the refresh TTL across instances)
+// and every decision cites its VersionHash. GET /v1/policies/active returns this.
+type BundleRef struct {
+	OrgID       string    `json:"org_id"`
+	PolicyID    string    `json:"policy_id"`
+	VersionHash string    `json:"version_hash"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
 // Version is an immutable, content-addressed, signed snapshot of a policy at publish
 // time. VersionHash is a pure function of the signed content (identity + rules), so
 // identical content always yields the same hash (republishing is idempotent) and any

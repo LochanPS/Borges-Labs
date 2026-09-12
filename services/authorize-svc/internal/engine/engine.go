@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -9,6 +10,11 @@ import (
 	"github.com/trust-infra/authorize-svc/internal/ulid"
 	contractsv1 "github.com/trust-infra/contracts/gen/go/contractsv1"
 )
+
+// ErrNoActiveBundle is returned by a BundleProvider when an org has no published
+// bundle. It lives here (not in internal/bundle) so the engine can recognize it
+// without importing the control plane; internal/bundle returns this exact value.
+var ErrNoActiveBundle = errors.New("engine: no active bundle for org")
 
 // Policy is an in-memory, immutable set of predicates the engine evaluates. In MVP it
 // is constructed from a fixture; Phase 2 loads it from a published, content-hashed
@@ -18,18 +24,30 @@ type Policy struct {
 	Predicates []Predicate
 }
 
+// BundleProvider resolves the active policy bundle for an org at decision time
+// (ROADMAP Task 2.2). It is defined here (not imported from internal/bundle) so the
+// engine has no dependency on the control plane — internal/bundle.Provider satisfies it
+// structurally. The implementation reads a process-local cache only; the engine never
+// makes a synchronous control-plane call on the hot path (TRD §3 boundary rule).
+type BundleProvider interface {
+	Active(ctx context.Context, orgID string) (Policy, error)
+}
+
 // Engine is the deterministic decision engine (TRD §5). Given the same request and
 // the same policy + evaluated_at, it always produces the same decision.
 //
-// Signature note: this phase still attaches the PLACEHOLDER signature (see
-// authorize.go). Real Ed25519 signing lands in Task 1.5 and replaces only the
-// signing step; the decision assembly here does not change.
+// Policy resolution: when Provider is set the engine evaluates the org's active bundle
+// (per-org, Task 2.2); otherwise it falls back to the static Policy loaded at boot
+// (file/GitOps mode, Task 1.7). Either way the decision cites the resolved bundle's
+// version hash.
 type Engine struct {
 	Policy       Policy
 	SigningKeyID string
-	// Signer, when set, applies a real Ed25519 signature (Task 1.5); when nil the
-	// decision carries the placeholder signature.
+	// Signer applies the Ed25519 decision signature (Task 1.5).
 	Signer *signing.Signer
+	// Provider, when set, resolves the per-org active bundle (Task 2.2). When nil the
+	// engine uses the static Policy for every org.
+	Provider BundleProvider
 }
 
 // NewEngine constructs an Engine over a policy.
@@ -43,11 +61,36 @@ func (e Engine) WithSigner(s *signing.Signer) Engine {
 	return e
 }
 
-// Authorize implements the server's Authorizer seam: it evaluates the applicable
-// predicates, combines them via the Phase-0 algebra, and assembles a signed Decision
-// with a structured explanation (TRD §7).
-func (e Engine) Authorize(_ context.Context, req contractsv1.AuthorizeRequest) (contractsv1.Decision, error) {
+// WithProvider returns a copy of the engine that resolves the per-org active bundle
+// via p instead of using the static boot policy (Task 2.2).
+func (e Engine) WithProvider(p BundleProvider) Engine {
+	e.Provider = p
+	return e
+}
+
+// Authorize implements the server's Authorizer seam: it resolves the org's active
+// policy bundle, evaluates the applicable predicates, combines them via the Phase-0
+// algebra, and assembles a signed Decision with a structured explanation (TRD §7).
+func (e Engine) Authorize(ctx context.Context, orgID string, req contractsv1.AuthorizeRequest) (contractsv1.Decision, error) {
 	start := time.Now()
+
+	pol := e.Policy
+	if e.Provider != nil {
+		resolved, err := e.Provider.Active(ctx, orgID)
+		switch {
+		case err == nil:
+			pol = resolved
+		case errors.Is(err, ErrNoActiveBundle) && len(e.Policy.Predicates) > 0:
+			// The org has not published a control-plane bundle: fall back to the static
+			// boot policy (file/GitOps mode, Task 1.7). Only reached when a static policy
+			// is configured; otherwise this is a controlled failure below.
+			pol = e.Policy
+		default:
+			// No servable bundle (or the cache could not produce one): a controlled
+			// failure, never a fabricated verdict (§21). The server maps this to 503.
+			return contractsv1.Decision{}, err
+		}
+	}
 
 	evaluatedAt := req.EvaluatedAt
 	if evaluatedAt == "" {
@@ -59,9 +102,9 @@ func (e Engine) Authorize(_ context.Context, req contractsv1.AuthorizeRequest) (
 	// evaluate them all and let the order-independent algebra combine them; the
 	// "short-circuit on hard DENY" in TRD §5 is what lets us skip ENRICHED
 	// predicates once a local deny exists — there are none in this phase.
-	results := make([]PredicateResult, 0, len(e.Policy.Predicates))
-	matched := make([]contractsv1.MatchedRule, 0, len(e.Policy.Predicates))
-	for _, p := range e.Policy.Predicates {
+	results := make([]PredicateResult, 0, len(pol.Predicates))
+	matched := make([]contractsv1.MatchedRule, 0, len(pol.Predicates))
+	for _, p := range pol.Predicates {
 		if !p.AppliesTo(in.AgentID) {
 			continue
 		}
@@ -86,7 +129,7 @@ func (e Engine) Authorize(_ context.Context, req contractsv1.AuthorizeRequest) (
 	dec := contractsv1.Decision{
 		DecisionID:        ulid.New(),
 		Verdict:           toContractVerdict(verdict),
-		PolicyVersionHash: e.Policy.Version,
+		PolicyVersionHash: pol.Version,
 		Explanation:       explanation,
 		Obligations:       []contractsv1.Obligation{},
 		EvaluatedAt:       evaluatedAt,

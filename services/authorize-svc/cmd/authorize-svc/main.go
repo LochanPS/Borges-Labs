@@ -18,11 +18,13 @@ import (
 
 	"github.com/trust-infra/authorize-svc/internal/audit"
 	"github.com/trust-infra/authorize-svc/internal/auth"
+	"github.com/trust-infra/authorize-svc/internal/bundle"
 	"github.com/trust-infra/authorize-svc/internal/config"
 	"github.com/trust-infra/authorize-svc/internal/engine"
 	"github.com/trust-infra/authorize-svc/internal/idempotency"
 	"github.com/trust-infra/authorize-svc/internal/logging"
 	"github.com/trust-infra/authorize-svc/internal/policy"
+	"github.com/trust-infra/authorize-svc/internal/policyctl"
 	"github.com/trust-infra/authorize-svc/internal/ratelimit"
 	"github.com/trust-infra/authorize-svc/internal/server"
 	"github.com/trust-infra/authorize-svc/internal/signing"
@@ -129,7 +131,29 @@ func main() {
 		log.Warn("using embedded default policy (set AUTHZ_POLICY_FILE for a custom policy)",
 			"version", pol.Version, "predicates", len(pol.Predicates))
 	}
-	authz := engine.NewEngine(pol, signer.KeyID()).WithSigner(signer)
+	engineCore := engine.NewEngine(pol, signer.KeyID()).WithSigner(signer)
+
+	// Control plane + bundle propagation (Task 2.2). When enabled, published policy
+	// versions serve per-org via an in-memory cache refreshed off the hot path; the
+	// static boot policy above stays the fallback for orgs that have not published
+	// (file/GitOps mode). A background context (cancelled at shutdown) drives the
+	// refresher. Boundary rule (TRD §3): the hot path reads only the local cache.
+	bgCtx, bgCancel := context.WithCancel(context.Background())
+	defer bgCancel()
+
+	var policySvc *policyctl.Service
+	var bundleProvider *bundle.Provider
+	if cfg.ControlPlaneEnabled {
+		policyStore := policyctl.NewPostgresStore(pg.Pool)
+		policySvc = policyctl.NewService(policyStore, signer)
+		bundleProvider = bundle.NewProvider(policyStore, log, cfg.BundleLoadTimeout)
+		engineCore = engineCore.WithProvider(bundleProvider)
+		go bundleProvider.Run(bgCtx, cfg.BundleRefreshTTL)
+		log.Info("control plane enabled", "bundle_refresh_ttl", cfg.BundleRefreshTTL.String())
+	} else {
+		log.Warn("control plane disabled; serving the static boot policy for every org")
+	}
+	authz := engineCore
 
 	// Request authentication (TRD §11): key records from Postgres (source of truth)
 	// fronted by a short-TTL Redis cache; per-key nonces in Redis for replay
@@ -179,6 +203,9 @@ func main() {
 	).WithKeys(func() any { return keyring.JWKS() }).
 		WithAudit(auditWriter, auditStore, keyring.VerifyDecision, cfg.RetentionFor).
 		WithIdempotency(idempotency.NewRedis(rds.Client, cfg.IdempotencyTTL))
+	if policySvc != nil {
+		srv = srv.WithControlPlane(policySvc, bundleProvider)
+	}
 
 	httpSrv := &http.Server{
 		Addr:              cfg.Addr,
