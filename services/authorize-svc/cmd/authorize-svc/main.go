@@ -143,10 +143,12 @@ func main() {
 
 	var policySvc *policyctl.Service
 	var bundleProvider *bundle.Provider
+	var simulator *bundle.Simulator
 	if cfg.ControlPlaneEnabled {
 		policyStore := policyctl.NewPostgresStore(pg.Pool)
 		policySvc = policyctl.NewService(policyStore, signer)
 		bundleProvider = bundle.NewProvider(policyStore, log, cfg.BundleLoadTimeout)
+		simulator = bundle.NewSimulator(policyStore)
 		engineCore = engineCore.WithProvider(bundleProvider)
 		go bundleProvider.Run(bgCtx, cfg.BundleRefreshTTL)
 		log.Info("control plane enabled", "bundle_refresh_ttl", cfg.BundleRefreshTTL.String())
@@ -204,7 +206,7 @@ func main() {
 		WithAudit(auditWriter, auditStore, keyring.VerifyDecision, cfg.RetentionFor).
 		WithIdempotency(idempotency.NewRedis(rds.Client, cfg.IdempotencyTTL))
 	if policySvc != nil {
-		srv = srv.WithControlPlane(policySvc, bundleProvider)
+		srv = srv.WithControlPlane(policySvc, bundleProvider, simulator)
 	}
 
 	httpSrv := &http.Server{

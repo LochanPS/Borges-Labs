@@ -91,14 +91,20 @@ type KeyRecord struct {
 	Tier       string // drives rate limits (Task 1.3) and quotas
 	Env        string // EnvLive | EnvTest
 	Status     string // StatusActive | StatusRevoked
+	// Shadow marks a log-only (advisory) key: decisions are evaluated and audited but
+	// flagged shadow so the caller does NOT enforce them (ROADMAP Task 2.3, A#5
+	// advisory-first). New keys default to shadow=true; flipping a key to enforce is
+	// shadow=false — the go/no-go lever for one agent at a time (ROADMAP §6.1).
+	Shadow bool
 }
 
 // Principal is the authenticated caller handed to downstream handlers.
 type Principal struct {
-	OrgID string
-	KeyID string
-	Tier  string
-	Env   string
+	OrgID  string
+	KeyID  string
+	Tier   string
+	Env    string
+	Shadow bool
 }
 
 // Error is an authentication failure with the HTTP status and machine code the HTTP
@@ -249,7 +255,7 @@ func (a *Authenticator) Authenticate(ctx context.Context, method, path string, h
 		return Principal{}, errReplay()
 	}
 
-	return Principal{OrgID: rec.OrgID, KeyID: rec.KeyID, Tier: rec.Tier, Env: rec.Env}, nil
+	return Principal{OrgID: rec.OrgID, KeyID: rec.KeyID, Tier: rec.Tier, Env: rec.Env, Shadow: rec.Shadow}, nil
 }
 
 // verifySignature checks the timestamp skew and the HMAC over the canonical payload.
@@ -398,6 +404,9 @@ func NewKey(env, orgID, tier string) (GeneratedKey, error) {
 			Tier:       tier,
 			Env:        env,
 			Status:     StatusActive,
+			// Advisory-first (A#5): a freshly minted key runs in shadow until it is
+			// deliberately flipped to enforce.
+			Shadow: true,
 		},
 	}, nil
 }

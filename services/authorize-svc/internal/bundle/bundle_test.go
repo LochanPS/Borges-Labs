@@ -155,7 +155,7 @@ func TestEngine_ProviderDrivenDecisionAndRollback(t *testing.T) {
 	ctx := context.Background()
 
 	// $100 is within the v1 limit → APPROVE citing v1.
-	d1, err := eng.Authorize(ctx, "org1", req("100.00"))
+	d1, err := eng.Authorize(ctx, "org1", req("100.00"), false)
 	if err != nil {
 		t.Fatalf("authorize v1: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestEngine_ProviderDrivenDecisionAndRollback(t *testing.T) {
 	if err := p.Invalidate(ctx, "org1"); err != nil {
 		t.Fatalf("invalidate: %v", err)
 	}
-	d2, _ := eng.Authorize(ctx, "org1", req("100.00"))
+	d2, _ := eng.Authorize(ctx, "org1", req("100.00"), false)
 	if d2.Verdict != contractsv1.VerdictDeny || d2.PolicyVersionHash != v2.VersionHash {
 		t.Errorf("v2 decision = %s/%s, want DENY/%s", d2.Verdict, d2.PolicyVersionHash, v2.VersionHash)
 	}
@@ -187,7 +187,7 @@ func TestEngine_ProviderDrivenDecisionAndRollback(t *testing.T) {
 	if err := p.Invalidate(ctx, "org1"); err != nil {
 		t.Fatalf("invalidate after rollback: %v", err)
 	}
-	d3, _ := eng.Authorize(ctx, "org1", req("100.00"))
+	d3, _ := eng.Authorize(ctx, "org1", req("100.00"), false)
 	if d3.Verdict != contractsv1.VerdictApprove || d3.PolicyVersionHash != v1 {
 		t.Errorf("post-rollback decision = %s/%s, want APPROVE/%s", d3.Verdict, d3.PolicyVersionHash, v1)
 	}
@@ -204,7 +204,7 @@ func TestEngine_FallsBackToStaticWhenOrgHasNoBundle(t *testing.T) {
 	}
 	eng := engine.NewEngine(static, "test-key").WithProvider(p)
 
-	d, err := eng.Authorize(context.Background(), "orphan-org", req("100.00"))
+	d, err := eng.Authorize(context.Background(), "orphan-org", req("100.00"), false)
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
 	}

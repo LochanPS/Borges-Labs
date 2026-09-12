@@ -42,7 +42,7 @@ func baseReq() contractsv1.AuthorizeRequest {
 func authorize(t *testing.T, req contractsv1.AuthorizeRequest) contractsv1.Decision {
 	t.Helper()
 	e := NewEngine(fixturePolicy(), "azn-sign-test")
-	dec, err := e.Authorize(context.Background(), "", req)
+	dec, err := e.Authorize(context.Background(), "", req, false)
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestEngine_ReviewOnCurrencyMismatch(t *testing.T) {
 
 func TestEngine_EmptyPolicyDeniesByDefault(t *testing.T) {
 	e := NewEngine(Policy{Version: "pol_empty"}, "k")
-	dec, err := e.Authorize(context.Background(), "", baseReq())
+	dec, err := e.Authorize(context.Background(), "", baseReq(), false)
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestEngine_AgentScopingFiltersRules(t *testing.T) {
 		VendorAllowlist{base: base{ID: "allow_all_agents"}, Vendors: []string{"acme"}},
 	}}
 	e := NewEngine(pol, "k")
-	dec, _ := e.Authorize(context.Background(), "", baseReq()) // agent-1, amount 1000
+	dec, _ := e.Authorize(context.Background(), "", baseReq(), false) // agent-1, amount 1000
 	// The 1.00 limit is scoped to agent-2, so it must NOT deny agent-1.
 	if dec.Verdict != contractsv1.VerdictApprove {
 		t.Fatalf("verdict = %q, want APPROVE (scoped rule should not apply)", dec.Verdict)

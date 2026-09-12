@@ -110,6 +110,7 @@ the decision plane for MVP (A2#2) and split into policy-svc at Phase 5.
 | `POST /v1/policies/{id}/publish` | validate → version → sign → store; set active |
 | `POST /v1/policies/{id}/rollback` | `{version_hash}` → re-point active at a prior version |
 | `GET /v1/policies/{id}/versions` | list versions, newest-first |
+| `POST /v1/policies/{id}/simulate` | dry-run a version (or the draft) against a batch of requests (Task 2.3) |
 | `GET /v1/policies/active` | the org's currently serving version (A#4) |
 
 > Not yet in `contracts/openapi.v1.yaml` — a follow-up adds these paths + the policy
@@ -133,6 +134,27 @@ each org's compiled active bundle in a process-local cache:
   has never published falls back to it instead of 503 (file/GitOps mode, Task 1.7).
 
 Each decision cites the exact `polv_` version hash it was evaluated under.
+
+## Shadow mode & simulate (Task 2.3, advisory-first — A#5)
+
+**Shadow mode** is the adoption wedge and the liability-safe default: you inform, the
+customer's code decides. It is a **per-key** flag (`api_keys.shadow`, migration 0005),
+defaulting to `true` on a freshly minted key. A shadow key's decisions are fully
+evaluated, signed, and written to the audit log — but returned `shadow: true` (a
+**signed** field, so the marker cannot be stripped) plus an `X-Shadow: true` response
+header, so the SDK/caller does **not** enforce them. Flipping one agent's key to
+`shadow=false` (`authz-keygen -enforce`) is the go/no-go lever for enforcement
+(ROADMAP §6.1). Shadow decisions are audited exactly like enforced ones, so "what did
+this agent's traffic do last week" is answerable from the log.
+
+**Simulate** (`POST /v1/policies/{id}/simulate`) dry-runs a policy against a batch of
+supplied requests and returns the would-be verdicts — the "what would this policy have
+done" demo. Body: `{ "version_hash"?: "polv_…", "requests": [AuthorizeRequest, …] }`.
+With a `version_hash` it evaluates that immutable published version; without one it
+validates and evaluates the current working-copy **draft** (preview edits before
+publishing). Each request's own `evaluated_at` is honored (replaying history). Results
+are **unsigned** and every one is `shadow: true` — a simulation is never enforceable and
+nothing is persisted.
 
 ## Storage
 

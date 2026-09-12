@@ -25,6 +25,7 @@ func main() {
 	org := flag.String("org", "", "org id the key belongs to (required)")
 	tier := flag.String("tier", "default", "tier id (drives rate limits)")
 	insert := flag.Bool("insert", false, "insert into api_keys using DATABASE_URL")
+	enforce := flag.Bool("enforce", false, "mint an ENFORCING key (shadow=false); default is advisory/shadow (A#5)")
 	flag.Parse()
 
 	if *org == "" {
@@ -37,6 +38,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
+	// Advisory-first (A#5): NewKey defaults shadow=true. -enforce flips it.
+	gk.Record.Shadow = !*enforce
 
 	// The plaintext is shown once; everything else stores only the hash.
 	fmt.Println("API KEY (store securely — shown only once):")
@@ -47,13 +50,18 @@ func main() {
 	fmt.Printf("org_id:     %s\n", gk.Record.OrgID)
 	fmt.Printf("tier:       %s\n", gk.Record.Tier)
 	fmt.Printf("env:        %s\n", gk.Record.Env)
+	fmt.Printf("shadow:     %v", gk.Record.Shadow)
+	if gk.Record.Shadow {
+		fmt.Print("  (advisory/log-only — flip with -enforce to enforce)")
+	}
+	fmt.Println()
 	fmt.Println()
 
 	if !*insert {
 		fmt.Println("-- persist with:")
-		fmt.Printf("INSERT INTO api_keys (key_id, key_sha256, org_id, tier, env, status)\n")
-		fmt.Printf("VALUES ('%s', '%s', '%s', '%s', '%s', 'active');\n",
-			gk.Record.KeyID, gk.Record.KeyHashHex, gk.Record.OrgID, gk.Record.Tier, gk.Record.Env)
+		fmt.Printf("INSERT INTO api_keys (key_id, key_sha256, org_id, tier, env, status, shadow)\n")
+		fmt.Printf("VALUES ('%s', '%s', '%s', '%s', '%s', 'active', %v);\n",
+			gk.Record.KeyID, gk.Record.KeyHashHex, gk.Record.OrgID, gk.Record.Tier, gk.Record.Env, gk.Record.Shadow)
 		return
 	}
 

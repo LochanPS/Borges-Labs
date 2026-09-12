@@ -65,7 +65,7 @@ func TestDecisionLatency_P99(t *testing.T) {
 	samples := make([]time.Duration, 0, iterations)
 	for i := 0; i < iterations; i++ {
 		start := time.Now()
-		if _, err := eng.Authorize(ctx, "", req); err != nil {
+		if _, err := eng.Authorize(ctx, "", req, false); err != nil {
 			t.Fatalf("authorize: %v", err)
 		}
 		samples = append(samples, time.Since(start))
@@ -96,7 +96,7 @@ func BenchmarkDecision(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := eng.Authorize(ctx, "", req); err != nil {
+		if _, err := eng.Authorize(ctx, "", req, false); err != nil {
 			b.Fatalf("authorize: %v", err)
 		}
 	}

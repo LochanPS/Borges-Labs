@@ -49,6 +49,7 @@ func newCPHarness(t *testing.T) *cpHarness {
 	store := policyctl.NewMemStore()
 	svc := policyctl.NewService(store, signer)
 	provider := bundle.NewProvider(store, log, time.Second)
+	sim := bundle.NewSimulator(store)
 	// Provider set, no static boot policy → an org with no published bundle 503s until
 	// it publishes (which is exactly what the publish→decision test exercises).
 	authz := engine.NewEngine(engine.Policy{}, signer.KeyID()).WithSigner(signer).WithProvider(provider)
@@ -57,7 +58,7 @@ func newCPHarness(t *testing.T) *cpHarness {
 	srv := New(log, BuildInfo{Version: "test"}, authz, testAuthn(keys), testLimiter(), generous,
 		Check{Name: "postgres", Ping: okPing},
 	).WithKeys(func() any { return keyring.JWKS() }).
-		WithControlPlane(svc, provider)
+		WithControlPlane(svc, provider, sim)
 
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)

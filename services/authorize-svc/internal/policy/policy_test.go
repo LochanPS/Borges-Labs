@@ -11,7 +11,7 @@ import (
 
 func approve(t *testing.T, pol engine.Policy, req contractsv1.AuthorizeRequest) contractsv1.Decision {
 	t.Helper()
-	dec, err := engine.NewEngine(pol, "test-key").Authorize(context.Background(), "", req)
+	dec, err := engine.NewEngine(pol, "test-key").Authorize(context.Background(), "", req, false)
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
 	}

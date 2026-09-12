@@ -42,7 +42,7 @@ type Check struct {
 // server depends only on this seam; the engine (stub today, real next) implements
 // it. Keeping it an interface is what keeps the handler thin and swappable.
 type Authorizer interface {
-	Authorize(ctx context.Context, orgID string, req contractsv1.AuthorizeRequest) (contractsv1.Decision, error)
+	Authorize(ctx context.Context, orgID string, req contractsv1.AuthorizeRequest, shadow bool) (contractsv1.Decision, error)
 }
 
 // Server holds handler dependencies.
@@ -77,6 +77,7 @@ type Server struct {
 	// to converge immediately after a same-process publish/rollback.
 	policySvc         *policyctl.Service
 	bundleInvalidator policyBundleInvalidator
+	simulator         policySimulator
 }
 
 // IdempotencyStore caches a decision by (org, idempotency_key). Implementations:
@@ -151,6 +152,7 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("/v1/policies/{id}/publish", s.method(http.MethodPost, cp(s.handlePublishPolicy).ServeHTTP))
 		mux.Handle("/v1/policies/{id}/rollback", s.method(http.MethodPost, cp(s.handleRollbackPolicy).ServeHTTP))
 		mux.Handle("/v1/policies/{id}/versions", s.method(http.MethodGet, cp(s.handleListVersions).ServeHTTP))
+		mux.Handle("/v1/policies/{id}/simulate", s.method(http.MethodPost, cp(s.handleSimulate).ServeHTTP))
 	}
 	mux.HandleFunc("/v1/keys/public", s.method(http.MethodGet, s.handleKeysPublic))
 	mux.HandleFunc("/v1/health", s.method(http.MethodGet, s.handleHealth))

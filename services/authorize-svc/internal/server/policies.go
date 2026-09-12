@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 
@@ -29,12 +30,21 @@ type policyBundleInvalidator interface {
 	Invalidate(ctx context.Context, orgID string) error
 }
 
-// WithControlPlane wires the policy control-plane endpoints (Task 2.2). svc is the
+// policySimulator dry-runs a policy version against a batch of requests, returning the
+// version label evaluated and one would-be (unsigned, shadow) decision per request
+// (internal/bundle.Simulator). Task 2.3.
+type policySimulator interface {
+	Simulate(ctx context.Context, orgID, policyID, versionHash string, reqs []contractsv1.AuthorizeRequest) (string, []contractsv1.Decision, error)
+}
+
+// WithControlPlane wires the policy control-plane endpoints (Task 2.2/2.3). svc is the
 // authoring/publish service; invalidator (optional) forces immediate bundle
-// convergence after a same-process publish/rollback.
-func (s *Server) WithControlPlane(svc *policyctl.Service, invalidator policyBundleInvalidator) *Server {
+// convergence after a same-process publish/rollback; sim (optional) backs
+// POST /v1/policies/{id}/simulate.
+func (s *Server) WithControlPlane(svc *policyctl.Service, invalidator policyBundleInvalidator, sim policySimulator) *Server {
 	s.policySvc = svc
 	s.bundleInvalidator = invalidator
+	s.simulator = sim
 	return s
 }
 
@@ -52,6 +62,23 @@ type publishRequest struct {
 
 type rollbackRequest struct {
 	VersionHash string `json:"version_hash"`
+}
+
+// maxSimulateRequests caps a dry-run batch so a simulate call cannot be used to burn
+// unbounded CPU.
+const maxSimulateRequests = 500
+
+type simulateRequest struct {
+	// VersionHash selects a published version to dry-run; empty means the current
+	// working copy (draft).
+	VersionHash string                          `json:"version_hash"`
+	Requests    []contractsv1.AuthorizeRequest `json:"requests"`
+}
+
+type simulateResponse struct {
+	VersionHash string                   `json:"version_hash"` // the version label evaluated
+	Shadow      bool                     `json:"shadow"`       // always true: results are advisory
+	Results     []contractsv1.Decision   `json:"results"`
 }
 
 type policyListResponse struct {
@@ -215,6 +242,57 @@ func (s *Server) handleListVersions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, versionListResponse{Data: versions})
+}
+
+// --- simulate: /v1/policies/{id}/simulate ------------------------------------
+
+// handleSimulate dry-runs a policy version (or the working-copy draft) against a batch
+// of supplied requests and returns the would-be verdicts, without signing or auditing
+// anything (ROADMAP Task 2.3). Every result is marked shadow — a simulation is never
+// enforceable.
+func (s *Server) handleSimulate(w http.ResponseWriter, r *http.Request) {
+	if !s.controlPlaneReady(w, r) {
+		return
+	}
+	if s.simulator == nil {
+		s.writeProblem(w, r, http.StatusServiceUnavailable, codeInternal,
+			"Simulation unavailable", "Policy simulation is not enabled on this instance.", nil)
+		return
+	}
+	org, ok := s.orgOf(w, r)
+	if !ok {
+		return
+	}
+	var body simulateRequest
+	if !s.decodePolicyBody(w, r, &body) {
+		return
+	}
+	if len(body.Requests) == 0 {
+		s.writeProblem(w, r, http.StatusBadRequest, codeValidationFailed,
+			"Validation failed", "requests must contain at least one authorize request.", nil)
+		return
+	}
+	if len(body.Requests) > maxSimulateRequests {
+		s.writeProblem(w, r, http.StatusBadRequest, codeValidationFailed,
+			"Validation failed", "too many requests in one simulation batch.", nil)
+		return
+	}
+	// Validate each request's wire shape (the same guard /v1/authorize applies), so a
+	// simulation reflects real inputs. evaluated_at is allowed here (replaying history).
+	for i, req := range body.Requests {
+		if items := validateAuthorizeRequest(req); len(items) > 0 {
+			s.writeProblem(w, r, http.StatusBadRequest, codeValidationFailed,
+				"Validation failed", fmt.Sprintf("requests[%d] is invalid.", i), items)
+			return
+		}
+	}
+
+	label, results, err := s.simulator.Simulate(r.Context(), org, r.PathValue("id"), body.VersionHash, body.Requests)
+	if err != nil {
+		s.writePolicyError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, simulateResponse{VersionHash: label, Shadow: true, Results: results})
 }
 
 // --- active bundle: /v1/policies/active --------------------------------------

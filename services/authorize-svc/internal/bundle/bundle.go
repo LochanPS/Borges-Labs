@@ -52,15 +52,23 @@ var enrichedTypes = map[string]bool{
 // dropped; the local subset is validated by the same loader the file path uses
 // (internal/policy), which guarantees parity with what publish accepted.
 func Compile(v *policyctl.Version) (engine.Policy, error) {
-	local := make([]policyctl.Rule, 0, len(v.Rules))
-	for _, r := range v.Rules {
+	return CompileRules(v.VersionHash, v.Rules)
+}
+
+// CompileRules compiles an arbitrary rule set under a version label into an
+// engine.Policy. It is the shared core of Compile (published versions) and simulate
+// (a draft working copy). Enriched placeholders are dropped; the local subset is
+// validated by the decision plane's own loader (internal/policy) for parity.
+func CompileRules(version string, rules []policyctl.Rule) (engine.Policy, error) {
+	local := make([]policyctl.Rule, 0, len(rules))
+	for _, r := range rules {
 		if enrichedTypes[r.Type] {
 			continue
 		}
 		local = append(local, r)
 	}
 	raw, err := json.Marshal(map[string]any{
-		"version":    v.VersionHash,
+		"version":    version,
 		"predicates": local,
 	})
 	if err != nil {
@@ -68,7 +76,7 @@ func Compile(v *policyctl.Version) (engine.Policy, error) {
 	}
 	pol, err := policy.Parse(raw)
 	if err != nil {
-		return engine.Policy{}, fmt.Errorf("bundle: compile version %s: %w", v.VersionHash, err)
+		return engine.Policy{}, fmt.Errorf("bundle: compile %s: %w", version, err)
 	}
 	return pol, nil
 }

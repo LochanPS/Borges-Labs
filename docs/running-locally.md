@@ -32,12 +32,18 @@ psql "$DATABASE_URL" -f deploy/migrations/0001_api_keys.sql
 psql "$DATABASE_URL" -f deploy/migrations/0002_decisions.sql
 psql "$DATABASE_URL" -f deploy/migrations/0003_policies.sql
 psql "$DATABASE_URL" -f deploy/migrations/0004_org_active_bundles.sql
+psql "$DATABASE_URL" -f deploy/migrations/0005_api_keys_shadow.sql
 ```
 
 Migrations 0003/0004 back the control plane (Task 2.2): policy authoring, immutable
 signed versions, and the per-org active-bundle pointer the decision plane converges
 to. The control plane is on by default; set `AUTHZ_CONTROL_PLANE_ENABLED=false` to run
 a pure decision node that serves only the static boot policy (`AUTHZ_POLICY_FILE`).
+
+Migration 0005 adds the per-key `shadow` flag (Task 2.3, advisory-first — A#5). New
+keys default to shadow (`authz-keygen` mints advisory keys; pass `-enforce` for an
+enforcing key). A shadow key's decisions are evaluated and audited but returned
+`shadow:true` (plus an `X-Shadow: true` header) so the caller does not enforce them.
 
 The audit log (0002) is append-only and works without extra config — sensitive
 fields are stored as plaintext until you set `AUTHZ_AUDIT_ENCRYPTION_KEY` (a 32-byte

@@ -44,7 +44,7 @@ type Stub struct {
 // It stamps evaluated_at if the orchestrator has not already (clients must not set
 // it — see the contract), measures its own evaluation latency, and mints a fresh
 // decision id. No policy is consulted.
-func (s Stub) Authorize(_ context.Context, _ string, req contractsv1.AuthorizeRequest) (contractsv1.Decision, error) {
+func (s Stub) Authorize(_ context.Context, _ string, req contractsv1.AuthorizeRequest, shadow bool) (contractsv1.Decision, error) {
 	start := time.Now()
 
 	evaluatedAt := req.EvaluatedAt
@@ -64,6 +64,7 @@ func (s Stub) Authorize(_ context.Context, _ string, req contractsv1.AuthorizeRe
 		// Non-nil so it serializes as [] not null.
 		Obligations: []contractsv1.Obligation{},
 		EvaluatedAt: evaluatedAt,
+		Shadow:      shadow,
 		Signature: contractsv1.Signature{
 			Algorithm:        "Ed25519",
 			KeyID:            s.SigningKeyID,

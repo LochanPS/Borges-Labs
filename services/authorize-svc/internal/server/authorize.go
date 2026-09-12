@@ -78,13 +78,17 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Org scoping: the active policy bundle is resolved per org (Task 2.2). The org
-	// comes from the authenticated key, never from the request body.
+	// comes from the authenticated key, never from the request body. shadow (Task 2.3,
+	// A#5) is a property of the key: a shadow key's decisions are evaluated + audited
+	// but marked non-enforceable.
 	var orgID string
+	var shadow bool
 	if principal, ok := principalOf(r); ok {
 		orgID = principal.OrgID
+		shadow = principal.Shadow
 	}
 
-	decision, err := s.authz.Authorize(r.Context(), orgID, req)
+	decision, err := s.authz.Authorize(r.Context(), orgID, req, shadow)
 	if err != nil {
 		reqLogger(r).Error("authorize failed", "err", err)
 		s.writeProblem(w, r, http.StatusServiceUnavailable, codeInternal,
@@ -97,6 +101,11 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	s.saveIdempotent(r, req, decision)
 
 	w.Header().Set("X-Decision-Id", decision.DecisionID)
+	if decision.Shadow {
+		// Advisory/log-only: an extra signal alongside the signed shadow field so a
+		// caller (or a proxy) cannot mistake this for an enforceable decision (A#5).
+		w.Header().Set("X-Shadow", "true")
+	}
 	writeJSON(w, http.StatusOK, decision)
 
 	// Persist to the append-only audit log AFTER the response is written, so the

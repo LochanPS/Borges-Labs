@@ -71,7 +71,7 @@ func (e Engine) WithProvider(p BundleProvider) Engine {
 // Authorize implements the server's Authorizer seam: it resolves the org's active
 // policy bundle, evaluates the applicable predicates, combines them via the Phase-0
 // algebra, and assembles a signed Decision with a structured explanation (TRD §7).
-func (e Engine) Authorize(ctx context.Context, orgID string, req contractsv1.AuthorizeRequest) (contractsv1.Decision, error) {
+func (e Engine) Authorize(ctx context.Context, orgID string, req contractsv1.AuthorizeRequest, shadow bool) (contractsv1.Decision, error) {
 	start := time.Now()
 
 	pol := e.Policy
@@ -96,12 +96,36 @@ func (e Engine) Authorize(ctx context.Context, orgID string, req contractsv1.Aut
 	if evaluatedAt == "" {
 		evaluatedAt = start.UTC().Format(time.RFC3339)
 	}
+
+	dec := Evaluate(pol, req, evaluatedAt)
+	// shadow marks an advisory (log-only) decision the caller must not enforce (A#5).
+	// It is part of the SIGNED bytes, so it is set before signing.
+	dec.Shadow = shadow
+	dec.Signature = contractsv1.Signature{
+		Algorithm:        "Ed25519",
+		KeyID:            e.SigningKeyID,
+		Value:            stubSignatureValue, // placeholder unless a Signer is set
+		Canonicalization: signatureCanonicalization,
+	}
+	if e.Signer != nil {
+		if err := e.Signer.Sign(&dec); err != nil {
+			return contractsv1.Decision{}, err
+		}
+	}
+	dec.LatencyMs = int(time.Since(start).Milliseconds())
+	return dec, nil
+}
+
+// Evaluate is the pure decision core: it evaluates the applicable predicates against a
+// policy and assembles an UNSIGNED Decision (verdict + explanation + cited version).
+// It sets no signature, no latency, and no shadow flag — Authorize adds those, and a
+// dry-run/simulate (Task 2.3) uses it directly without signing or auditing.
+// Deterministic in (pol, req, evaluatedAt): identical inputs → identical output.
+func Evaluate(pol Policy, req contractsv1.AuthorizeRequest, evaluatedAt string) contractsv1.Decision {
 	in := buildInput(req, evaluatedAt)
 
-	// Evaluate every applicable predicate. All six types are local (no I/O), so we
-	// evaluate them all and let the order-independent algebra combine them; the
-	// "short-circuit on hard DENY" in TRD §5 is what lets us skip ENRICHED
-	// predicates once a local deny exists — there are none in this phase.
+	// All six types are local (no I/O), so evaluate them all and let the
+	// order-independent algebra combine them (TRD §5).
 	results := make([]PredicateResult, 0, len(pol.Predicates))
 	matched := make([]contractsv1.MatchedRule, 0, len(pol.Predicates))
 	for _, p := range pol.Predicates {
@@ -124,29 +148,14 @@ func (e Engine) Authorize(ctx context.Context, orgID string, req contractsv1.Aut
 	}
 
 	verdict := Combine(results)
-	explanation := assembleExplanation(verdict, matched)
-
-	dec := contractsv1.Decision{
+	return contractsv1.Decision{
 		DecisionID:        ulid.New(),
 		Verdict:           toContractVerdict(verdict),
 		PolicyVersionHash: pol.Version,
-		Explanation:       explanation,
+		Explanation:       assembleExplanation(verdict, matched),
 		Obligations:       []contractsv1.Obligation{},
 		EvaluatedAt:       evaluatedAt,
-		Signature: contractsv1.Signature{
-			Algorithm:        "Ed25519",
-			KeyID:            e.SigningKeyID,
-			Value:            stubSignatureValue, // placeholder unless a Signer is set
-			Canonicalization: signatureCanonicalization,
-		},
 	}
-	if e.Signer != nil {
-		if err := e.Signer.Sign(&dec); err != nil {
-			return contractsv1.Decision{}, err
-		}
-	}
-	dec.LatencyMs = int(time.Since(start).Milliseconds())
-	return dec, nil
 }
 
 // buildInput normalizes the request into the deterministic evaluation vector.
