@@ -9,7 +9,7 @@ DATE      ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS   := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
 
 .PHONY: help up down logs run build test tidy fmt vet \
-        gen-ts test-contracts test-python test-ts docs test-all
+        gen-ts test-contracts test-python test-ts docs dashboard test-dashboard test-all
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-10s %s\n", $$1, $$2}'
@@ -57,4 +57,10 @@ test-ts: ## Build + test the TypeScript SDK
 docs: ## Build the docs site (API reference generated from the OpenAPI spec)
 	cd docs-site && npm install && npm run build
 
-test-all: test test-contracts test-python test-ts ## Run every test suite in the repo
+dashboard: ## Run the control-plane dashboard in dev mode (http://localhost:3000)
+	cd services/dashboard && npm install && npm run dev
+
+test-dashboard: ## Test + build the dashboard
+	cd services/dashboard && npm install && npm test && npm run build
+
+test-all: test test-contracts test-python test-ts test-dashboard ## Run every test suite in the repo

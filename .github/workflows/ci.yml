@@ -85,7 +85,7 @@ jobs:
       - name: Regenerate contract types and check for drift
         run: |
           node contracts/tools/gen-ts.mjs
-          git diff --exit-code contracts/gen/ts sdks/ts/src/contracts/generated.ts \
+          git diff --exit-code contracts/gen/ts sdks/ts/src/contracts/generated.ts services/dashboard/src/lib/contracts/generated.ts \
             || (echo "generated types are stale; run: node contracts/tools/gen-ts.mjs" && exit 1)
       - name: Install
         working-directory: sdks/ts
@@ -114,6 +114,24 @@ jobs:
       - name: Install
         run: npm ci
       - name: Build docs (lint + bundle + build-docs)
+        run: npm run build
+
+  dashboard:
+    name: dashboard (Next.js build + verify tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install
+        run: npm ci
+      - name: Unit tests (client-side signature verify)
+        run: npm test
+      - name: Build
         run: npm run build
 
   compose-smoke:

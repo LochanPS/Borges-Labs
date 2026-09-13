@@ -134,6 +134,7 @@ function main() {
   for (const target of [
     join(ROOT, "contracts", "gen", "ts", "contractsv1", "types.ts"),
     join(ROOT, "sdks", "ts", "src", "contracts", "generated.ts"),
+    join(ROOT, "services", "dashboard", "src", "lib", "contracts", "generated.ts"),
   ]) {
     mkdirSync(dirname(target), { recursive: true });
     writeFileSync(target, out, "utf8");

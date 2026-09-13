@@ -52,8 +52,16 @@ switch ($Task) {
         Push-Location docs-site
         try { Invoke-Native { npm install }; Invoke-Native { npm run build } } finally { Pop-Location }
     }
+    "dashboard" {
+        Push-Location services/dashboard
+        try { Invoke-Native { npm install }; Invoke-Native { npm run dev } } finally { Pop-Location }
+    }
+    "test-dashboard" {
+        Push-Location services/dashboard
+        try { Invoke-Native { npm install }; Invoke-Native { npm test }; Invoke-Native { npm run build } } finally { Pop-Location }
+    }
     "test-all" {
-        foreach ($t in @("test", "test-contracts", "test-python", "test-ts")) {
+        foreach ($t in @("test", "test-contracts", "test-python", "test-ts", "test-dashboard")) {
             Write-Host "== $t ==" -ForegroundColor Cyan
             & $PSCommandPath $t
             if (-not $?) { throw "task '$t' failed" }
@@ -61,6 +69,7 @@ switch ($Task) {
     }
     default {
         Write-Host "Tasks: up | down | logs | run | build | test | tidy | fmt | vet"
-        Write-Host "       gen-ts | test-contracts | test-python | test-ts | docs | test-all"
+        Write-Host "       gen-ts | test-contracts | test-python | test-ts | docs"
+        Write-Host "       dashboard | test-dashboard | test-all"
     }
 }
