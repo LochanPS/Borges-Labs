@@ -91,21 +91,35 @@ type versionListResponse struct {
 
 // --- collection: /v1/policies ------------------------------------------------
 
-// handlePolicies dispatches the collection endpoint by method: POST creates a draft,
-// GET is reserved (listing across an org needs a store index added later) → 405 for now
-// on anything but POST.
+// handlePolicies dispatches the collection endpoint by method: GET lists the org's
+// policies, POST creates a draft.
 func (s *Server) handlePolicies(w http.ResponseWriter, r *http.Request) {
 	if !s.controlPlaneReady(w, r) {
 		return
 	}
 	switch r.Method {
+	case http.MethodGet:
+		s.handleListPolicies(w, r)
 	case http.MethodPost:
 		s.handleCreatePolicy(w, r)
 	default:
-		w.Header().Set("Allow", http.MethodPost)
+		w.Header().Set("Allow", "GET, POST")
 		s.writeProblem(w, r, http.StatusMethodNotAllowed, codeMethodNotAllowed,
-			"Method not allowed", "This endpoint supports POST (create policy).", nil)
+			"Method not allowed", "This endpoint supports GET (list) and POST (create policy).", nil)
 	}
+}
+
+func (s *Server) handleListPolicies(w http.ResponseWriter, r *http.Request) {
+	org, ok := s.orgOf(w, r)
+	if !ok {
+		return
+	}
+	policies, err := s.policySvc.List(r.Context(), org)
+	if err != nil {
+		s.writePolicyError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, policyListResponse{Data: policies})
 }
 
 func (s *Server) handleCreatePolicy(w http.ResponseWriter, r *http.Request) {

@@ -27,6 +27,8 @@ type Store interface {
 	CreatePolicy(ctx context.Context, p *Policy) error
 	GetPolicy(ctx context.Context, orgID, id string) (*Policy, error)
 	UpdatePolicy(ctx context.Context, p *Policy) error
+	// ListPolicies returns every policy for an org, newest-updated first.
+	ListPolicies(ctx context.Context, orgID string) ([]*Policy, error)
 
 	PutVersion(ctx context.Context, v *Version) (created bool, err error)
 	GetVersion(ctx context.Context, orgID, policyID, versionHash string) (*Version, error)
@@ -98,6 +100,21 @@ func (m *MemStore) UpdatePolicy(_ context.Context, p *Policy) error {
 	cp := *p
 	m.policies[k] = &cp
 	return nil
+}
+
+func (m *MemStore) ListPolicies(_ context.Context, orgID string) ([]*Policy, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]*Policy, 0)
+	prefix := orgID + "|"
+	for k, p := range m.policies {
+		if len(k) >= len(prefix) && k[:len(prefix)] == prefix {
+			cp := *p
+			out = append(out, &cp)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].UpdatedAt.After(out[j].UpdatedAt) })
+	return out, nil
 }
 
 func (m *MemStore) PutVersion(_ context.Context, v *Version) (bool, error) {

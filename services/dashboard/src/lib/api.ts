@@ -124,12 +124,10 @@ export async function getActivePolicy(): Promise<BundleRef | null> {
 }
 
 export async function listPolicies(): Promise<Policy[]> {
-  // No list endpoint in the contract; derive from the active bundle when live.
   if (!liveBackend()) return [MOCK_POLICY];
   try {
-    const active = await call<BundleRef>("GET", "/v1/policies/active");
-    const policy = await call<Policy>("GET", `/v1/policies/${encodeURIComponent(active.policy_id)}`);
-    return [policy];
+    const res = await call<{ data: Policy[] }>("GET", "/v1/policies");
+    return res.data;
   } catch {
     return [MOCK_POLICY];
   }

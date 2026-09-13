@@ -244,6 +244,33 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
   /v1/policies:
+    get:
+      tags: [control-plane]
+      operationId: listPolicies
+      summary: List the org's policies (working copies).
+      description: |
+        Returns every policy owned by the caller's org (taken from the API key), newest-
+        updated first. Working copies — use `GET /v1/policies/{id}/versions` for a policy's
+        immutable published versions.
+      parameters:
+        - $ref: "#/components/parameters/ApiKey"
+        - $ref: "#/components/parameters/Signature"
+        - $ref: "#/components/parameters/Nonce"
+        - $ref: "#/components/parameters/Timestamp"
+      responses:
+        "200":
+          description: The org's policies.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Policy" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
     post:
       tags: [control-plane]
       operationId: createPolicy

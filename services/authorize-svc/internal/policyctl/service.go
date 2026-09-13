@@ -78,6 +78,11 @@ func (s *Service) Get(ctx context.Context, orgID, id string) (*Policy, error) {
 	return s.store.GetPolicy(ctx, orgID, id)
 }
 
+// List returns all of an org's policies (working copies), newest-updated first.
+func (s *Service) List(ctx context.Context, orgID string) ([]*Policy, error) {
+	return s.store.ListPolicies(ctx, orgID)
+}
+
 // Update replaces a policy's working-copy fields (name, agents, rules). It does not
 // publish and does not touch the active version — the previously published version
 // keeps serving until the next Publish. Status is unchanged (a policy that was

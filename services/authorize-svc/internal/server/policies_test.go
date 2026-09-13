@@ -230,3 +230,37 @@ func TestControlPlane_OrgIsolation(t *testing.T) {
 		t.Fatalf("owner get status = %d, want 200", resp.StatusCode)
 	}
 }
+
+// GET /v1/policies lists the org's policies (Task 5.1 dashboard: policies index).
+func TestControlPlane_ListPolicies(t *testing.T) {
+	h := newCPHarness(t)
+
+	for _, name := range []string{"alpha", "beta"} {
+		body := mustJSON(t, map[string]any{"name": name, "rules": validRules()})
+		resp, b := do(t, h.sign(t, http.MethodPost, "/v1/policies", body, h.active))
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("create %s = %d; body: %s", name, resp.StatusCode, b)
+		}
+	}
+
+	resp, body := do(t, h.sign(t, http.MethodGet, "/v1/policies", nil, h.active))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("list status = %d; body: %s", resp.StatusCode, body)
+	}
+	var out struct {
+		Data []policyctl.Policy `json:"data"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(out.Data) != 2 {
+		t.Fatalf("want 2 policies, got %d", len(out.Data))
+	}
+	names := map[string]bool{}
+	for _, p := range out.Data {
+		names[p.Name] = true
+	}
+	if !names["alpha"] || !names["beta"] {
+		t.Fatalf("missing policies in list: %+v", out.Data)
+	}
+}

@@ -93,6 +93,44 @@ func (s *PostgresStore) UpdatePolicy(ctx context.Context, p *Policy) error {
 	return nil
 }
 
+func (s *PostgresStore) ListPolicies(ctx context.Context, orgID string) ([]*Policy, error) {
+	const q = `
+		SELECT id, org_id, name, agents, rules, status, active_version_hash, created_at, updated_at
+		FROM policies WHERE org_id=$1 ORDER BY updated_at DESC`
+	rows, err := s.pool.Query(ctx, q, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("policyctl: list policies: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]*Policy, 0)
+	for rows.Next() {
+		var (
+			p                    Policy
+			agentsJSON, rulesJSON []byte
+			active               *string
+			status               string
+		)
+		if err := rows.Scan(
+			&p.ID, &p.OrgID, &p.Name, &agentsJSON, &rulesJSON, &status, &active, &p.CreatedAt, &p.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("policyctl: scan policy: %w", err)
+		}
+		p.Status = Status(status)
+		if active != nil {
+			p.ActiveVersionHash = *active
+		}
+		if err := unmarshalDoc(agentsJSON, rulesJSON, &p.Agents, &p.Rules); err != nil {
+			return nil, err
+		}
+		out = append(out, &p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("policyctl: list policies: %w", err)
+	}
+	return out, nil
+}
+
 func (s *PostgresStore) PutVersion(ctx context.Context, v *Version) (bool, error) {
 	agents, rules, err := marshalDoc(v.Agents, v.Rules)
 	if err != nil {
