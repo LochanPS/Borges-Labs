@@ -153,8 +153,13 @@ export async function listPolicyVersions(id: string): Promise<PolicyVersion[]> {
 }
 
 export async function listKeys(): Promise<ApiKey[]> {
-  // Key-management endpoints are not in the contract yet; mock for now.
-  return MOCK_KEYS;
+  if (!liveBackend()) return MOCK_KEYS;
+  try {
+    const res = await call<{ data: ApiKey[] }>("GET", "/v1/keys");
+    return res.data;
+  } catch {
+    return MOCK_KEYS;
+  }
 }
 
 // --- Writes (control plane) ---------------------------------------------- //
@@ -198,22 +203,31 @@ export async function rollbackPolicy(id: string, versionHash: string): Promise<P
   return call<PolicyVersion>("POST", `/v1/policies/${encodeURIComponent(id)}/rollback`, { version_hash: versionHash });
 }
 
-export async function createKey(input: { env: "live" | "test"; shadow: boolean; scopes: string[] }): Promise<CreatedApiKey> {
-  // Mock: mint a plausible one-time secret. Replace with POST /v1/keys when it lands.
-  const rand = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
-  const prefix = input.env === "live" ? "azn_live_" : "azn_test_";
-  return {
-    id: `key_${input.env}_${Date.now()}`,
-    prefix,
-    org_id: "org_demo",
-    scopes: input.scopes,
-    is_active: true,
+export async function createKey(input: { env: "live" | "test"; shadow: boolean; tier?: string }): Promise<CreatedApiKey> {
+  if (!liveBackend()) {
+    // Mock: mint a plausible one-time secret so the create-once flow is demoable.
+    const rand = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+    const prefix = input.env === "live" ? "azn_live_" : "azn_test_";
+    return {
+      id: `${prefix}${rand.slice(0, 16)}`,
+      prefix,
+      org_id: "org_demo",
+      env: input.env,
+      tier: input.tier ?? "default",
+      is_active: true,
+      shadow: input.shadow,
+      created_at: new Date().toISOString(),
+      secret: `${prefix}${rand}${rand}`.slice(0, prefix.length + 43),
+    };
+  }
+  return call<CreatedApiKey>("POST", "/v1/keys", {
+    env: input.env,
     shadow: input.shadow,
-    created_at: new Date().toISOString(),
-    secret: `${prefix}${rand}${rand}`.slice(0, prefix.length + 43),
-  };
+    ...(input.tier ? { tier: input.tier } : {}),
+  });
 }
 
-export async function revokeKey(id: string): Promise<{ id: string; is_active: false }> {
-  return { id, is_active: false };
+export async function revokeKey(id: string): Promise<ApiKey | { id: string; is_active: false }> {
+  if (!liveBackend()) return { id, is_active: false };
+  return call<ApiKey>("POST", `/v1/keys/${encodeURIComponent(id)}/revoke`);
 }

@@ -11,13 +11,18 @@ import (
 type MemKeyStore struct {
 	mu   sync.RWMutex
 	keys map[string]KeyRecord
+	info map[string]memInfo // management metadata (created_at/revoked_at) for KeyAdmin
 }
 
 // NewMemKeyStore builds a store seeded with the given records (indexed by KeyID).
 func NewMemKeyStore(records ...KeyRecord) *MemKeyStore {
-	m := &MemKeyStore{keys: make(map[string]KeyRecord, len(records))}
+	m := &MemKeyStore{
+		keys: make(map[string]KeyRecord, len(records)),
+		info: make(map[string]memInfo, len(records)),
+	}
 	for _, r := range records {
 		m.keys[r.KeyID] = r
+		m.info[r.KeyID] = memInfo{createdAt: time.Now().UTC()}
 	}
 	return m
 }

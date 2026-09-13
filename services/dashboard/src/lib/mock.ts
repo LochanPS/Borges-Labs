@@ -100,6 +100,6 @@ export const MOCK_DECISIONS: Decision[] = [
 ];
 
 export const MOCK_KEYS: ApiKey[] = [
-  { id: "key_live_01", prefix: "azn_live_", org_id: "org_demo", is_active: true, shadow: false, scopes: ["authorize"], created_at: "2026-08-10T08:00:00Z", last_used_at: "2026-08-27T13:41:20Z" },
-  { id: "key_test_01", prefix: "azn_test_", org_id: "org_demo", is_active: true, shadow: true, scopes: ["authorize"], created_at: "2026-08-12T08:00:00Z", last_used_at: "2026-08-26T09:12:00Z" },
+  { id: "azn_live_9f2a1c7e4b5d6a8f", prefix: "azn_live_", org_id: "org_demo", env: "live", tier: "default", is_active: true, shadow: false, created_at: "2026-08-10T08:00:00Z" },
+  { id: "azn_test_11aa22bb33cc44dd", prefix: "azn_test_", org_id: "org_demo", env: "test", tier: "default", is_active: true, shadow: true, created_at: "2026-08-12T08:00:00Z" },
 ];

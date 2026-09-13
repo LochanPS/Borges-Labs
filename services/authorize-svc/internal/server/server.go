@@ -82,6 +82,11 @@ type Server struct {
 	// budget, when set, backs the two-phase budget lifecycle (Task 3.1/3.2): the engine
 	// reserves during authorize, and capture/void settle the reservation here.
 	budget budgetLifecycle
+
+	// Key management (control plane). When keyAdmin is set the /v1/keys endpoints are
+	// mounted; keyCacheInvalidate (optional) evicts the hot-path key cache on revoke.
+	keyAdmin           auth.KeyAdmin
+	keyCacheInvalidate keyCacheInvalidate
 }
 
 // IdempotencyStore caches a decision by (org, idempotency_key). Implementations:
@@ -162,6 +167,13 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("/v1/policies/{id}/rollback", s.method(http.MethodPost, cp(s.handleRollbackPolicy).ServeHTTP))
 		mux.Handle("/v1/policies/{id}/versions", s.method(http.MethodGet, cp(s.handleListVersions).ServeHTTP))
 		mux.Handle("/v1/policies/{id}/simulate", s.method(http.MethodPost, cp(s.handleSimulate).ServeHTTP))
+	}
+	// Key management (control plane), mounted only when wired. Authenticated +
+	// rate-limited + org-scoped. Distinct from the public JWKS route below.
+	if s.keyAdmin != nil {
+		km := func(h http.HandlerFunc) http.Handler { return s.authenticate(s.rateLimit(h)) }
+		mux.Handle("/v1/keys", km(s.handleKeys))
+		mux.Handle("/v1/keys/{id}/revoke", s.method(http.MethodPost, km(s.handleRevokeKey).ServeHTTP))
 	}
 	mux.HandleFunc("/v1/keys/public", s.method(http.MethodGet, s.handleKeysPublic))
 	mux.HandleFunc("/v1/health", s.method(http.MethodGet, s.handleHealth))

@@ -73,6 +73,7 @@ func newCPHarness(t *testing.T) *cpHarness {
 	).WithKeys(func() any { return keyring.JWKS() }).
 		WithControlPlane(svc, provider, sim).
 		WithBudget(reserver).
+		WithKeyAdmin(keys, nil).
 		WithIdempotency(idempotency.NewMem())
 
 	ts := httptest.NewServer(srv.Handler())

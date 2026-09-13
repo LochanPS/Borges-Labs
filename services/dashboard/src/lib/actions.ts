@@ -71,7 +71,7 @@ export async function createKeyAction(
   try {
     const env = (String(formData.get("env")) === "live" ? "live" : "test") as "live" | "test";
     const shadow = formData.get("shadow") === "on";
-    const key = await api.createKey({ env, shadow, scopes: ["authorize"] });
+    const key = await api.createKey({ env, shadow });
     revalidatePath("/keys");
     return { key };
   } catch (e) {

@@ -45,16 +45,14 @@ npm test     # client-side Ed25519 verify: valid, tamper, unknown/revoked key, b
 npm run build
 ```
 
-## Contract gaps (flagged for follow-up)
+## Contract coverage
 
-The frozen `/v1` contract does not yet expose everything this UI wants. Where an endpoint
-is missing, the screen uses mock/derived data and targets the intended additive path:
+Every screen now talks to a real endpoint when a live backend is configured:
 
-- **No list-policies endpoint** — the policies list derives from `GET /v1/policies/active`
-  → `GET /v1/policies/{id}` when live. Add `GET /v1/policies`.
-- **No key-management endpoints** — only `GET /v1/keys/public` exists. The keys screen is
-  mock-backed and targets `POST /v1/keys` / `POST /v1/keys/{id}/revoke`. Add these
-  (additive) to the contract + authorize-svc, then wire `lib/api.ts`.
-- Control-plane view types (Policy, PolicyVersion, BundleRef, ApiKey) are hand-mirrored in
-  `src/lib/contracts/controlplane.ts` from the OpenAPI components; a generator pass could
-  emit them.
+- **Policies list** → `GET /v1/policies` (added additively to `/v1`).
+- **API keys** → `GET /v1/keys`, `POST /v1/keys` (secret shown once), `POST /v1/keys/{id}/revoke`.
+  Revoke evicts the hot-path key cache so it takes effect immediately.
+
+Remaining note: control-plane view types (Policy, PolicyVersion, BundleRef, ApiKey) are
+hand-mirrored in `src/lib/contracts/controlplane.ts` from the OpenAPI components; a
+generator pass over the OpenAPI file could emit them like the JSON-Schema types.

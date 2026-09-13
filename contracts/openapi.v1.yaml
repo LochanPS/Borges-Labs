@@ -483,6 +483,87 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/Unprocessable" }
+  /v1/keys:
+    get:
+      tags: [keys]
+      operationId: listApiKeys
+      summary: List the org's API keys (never returns secrets).
+      description: |
+        Returns the caller's org's API keys (public id + metadata only — the secret is
+        never retrievable after creation). Newest first.
+      parameters:
+        - $ref: "#/components/parameters/ApiKey"
+        - $ref: "#/components/parameters/Signature"
+        - $ref: "#/components/parameters/Nonce"
+        - $ref: "#/components/parameters/Timestamp"
+      responses:
+        "200":
+          description: The org's keys.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/ApiKey" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [keys]
+      operationId: createApiKey
+      summary: Mint a new API key (secret shown once).
+      description: |
+        Creates an API key for the caller's org (taken from the key, never the body).
+        The plaintext `secret` is returned EXACTLY ONCE in this response and is never
+        retrievable again — only its SHA-256 is stored. New keys default to shadow
+        (advisory) unless `shadow: false` is given (advisory-first, ROADMAP A#5).
+      parameters:
+        - $ref: "#/components/parameters/ApiKey"
+        - $ref: "#/components/parameters/Signature"
+        - $ref: "#/components/parameters/Nonce"
+        - $ref: "#/components/parameters/Timestamp"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateKeyRequest" }
+      responses:
+        "201":
+          description: The created key, including its one-time secret.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreatedApiKey" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/keys/{id}/revoke:
+    post:
+      tags: [keys]
+      operationId: revokeApiKey
+      summary: Revoke an API key (immediate).
+      description: |
+        Revokes a key within the caller's org. A revoked key remains a valid credential
+        but is refused with 403; the hot-path cache is evicted so revocation is
+        immediate (TRD §11). Idempotent.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The public key id (e.g. `azn_live_<hashprefix>`).
+          schema: { type: string, minLength: 1 }
+        - $ref: "#/components/parameters/ApiKey"
+        - $ref: "#/components/parameters/Signature"
+        - $ref: "#/components/parameters/Nonce"
+        - $ref: "#/components/parameters/Timestamp"
+      responses:
+        "200":
+          description: The key after revocation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiKey" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/keys/public:
     get:
       tags: [keys]
@@ -655,6 +736,47 @@ components:
         application/problem+json:
           schema: { $ref: "./schemas/error.schema.json" }
   schemas:
+    CreateKeyRequest:
+      type: object
+      description: Body for POST /v1/keys. The org is taken from the API key, never the body.
+      additionalProperties: false
+      required: [env]
+      properties:
+        env:
+          type: string
+          enum: [live, test]
+          description: Key environment; sets the azn_live_ / azn_test_ prefix.
+        tier:
+          type: string
+          description: Rate-limit/quota tier. Defaults to "default".
+        shadow:
+          type: boolean
+          description: Advisory (log-only) key. Defaults to true (advisory-first, A#5).
+    ApiKey:
+      type: object
+      description: The non-secret view of an API key. Never contains key material.
+      additionalProperties: false
+      required: [id, prefix, org_id, env, tier, is_active, shadow, created_at]
+      properties:
+        id: { type: string, description: Public key id (prefix + hash prefix); safe to log. }
+        prefix: { type: string, enum: ["azn_live_", "azn_test_"] }
+        org_id: { type: string }
+        env: { type: string, enum: [live, test] }
+        tier: { type: string }
+        is_active: { type: boolean, description: False once revoked. }
+        shadow: { type: boolean }
+        created_at: { $ref: "./schemas/common.schema.json#/$defs/Timestamp" }
+        revoked_at: { $ref: "./schemas/common.schema.json#/$defs/Timestamp" }
+    CreatedApiKey:
+      description: An ApiKey plus the one-time plaintext secret, returned only on create.
+      allOf:
+        - $ref: "#/components/schemas/ApiKey"
+        - type: object
+          required: [secret]
+          properties:
+            secret:
+              type: string
+              description: The full API key. Shown once here and never retrievable again.
     HoldState:
       type: object
       description: A budget hold's state after a capture/void transition (Task 3.1).

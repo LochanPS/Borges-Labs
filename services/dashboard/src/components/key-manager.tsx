@@ -71,7 +71,7 @@ export function KeyManager({ keys }: { keys: ApiKey[] }) {
                 <Th>Mode</Th>
                 <Th>Status</Th>
                 <Th>Created</Th>
-                <Th>Last used</Th>
+                <Th>Revoked</Th>
                 <Th />
               </tr>
             </thead>
@@ -82,7 +82,7 @@ export function KeyManager({ keys }: { keys: ApiKey[] }) {
                   <Td>{k.shadow ? <Badge className="text-[var(--review)] border-[var(--review)]/40 bg-[var(--review)]/10">shadow</Badge> : <Badge className="text-[var(--approve)] border-[var(--approve)]/40 bg-[var(--approve)]/10">enforce</Badge>}</Td>
                   <Td>{k.is_active ? "active" : "revoked"}</Td>
                   <Td className="mono text-xs text-[var(--muted)]">{formatTime(k.created_at)}</Td>
-                  <Td className="mono text-xs text-[var(--muted)]">{formatTime(k.last_used_at)}</Td>
+                  <Td className="mono text-xs text-[var(--muted)]">{k.revoked_at ? formatTime(k.revoked_at) : "—"}</Td>
                   <Td>
                     {k.is_active && (
                       <form action={revokeKeyAction.bind(null, k.id)}>

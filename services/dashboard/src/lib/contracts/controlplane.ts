@@ -82,16 +82,18 @@ export interface HealthStatus {
   enrichment?: "ok" | "degraded" | "disabled";
 }
 
-/** API key as the dashboard shows it. The raw secret is returned ONCE on create. */
+/** API key as the dashboard shows it (OpenAPI #/components/schemas/ApiKey). Never
+ *  contains key material; the raw secret is returned ONCE on create. */
 export interface ApiKey {
   id: string;
-  prefix: string;
+  prefix: "azn_live_" | "azn_test_";
   org_id: string;
-  scopes?: string[];
+  env: "live" | "test";
+  tier: string;
   is_active: boolean;
   shadow: boolean;
   created_at: Timestamp;
-  last_used_at?: Timestamp;
+  revoked_at?: Timestamp;
 }
 
 export interface CreatedApiKey extends ApiKey {

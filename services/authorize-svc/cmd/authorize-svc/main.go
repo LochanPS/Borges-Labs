@@ -175,11 +175,9 @@ func main() {
 	// Request authentication (TRD §11): key records from Postgres (source of truth)
 	// fronted by a short-TTL Redis cache; per-key nonces in Redis for replay
 	// protection.
-	keyStore := auth.NewCachedKeyStore(
-		auth.NewRedisKeyCache(rds.Client),
-		auth.NewPostgresKeyStore(pg.Pool),
-		cfg.KeyCacheTTL,
-	)
+	pgKeyStore := auth.NewPostgresKeyStore(pg.Pool)
+	keyCache := auth.NewRedisKeyCache(rds.Client)
+	keyStore := auth.NewCachedKeyStore(keyCache, pgKeyStore, cfg.KeyCacheTTL)
 	authn := auth.New(keyStore, auth.NewRedisNonceStore(rds.Client), auth.Config{
 		MaxSkew:  cfg.HMACMaxSkew,
 		NonceTTL: cfg.NonceTTL,
@@ -223,6 +221,9 @@ func main() {
 	if policySvc != nil {
 		srv = srv.WithControlPlane(policySvc, bundleProvider, simulator)
 	}
+	// API-key management (control plane): Postgres is the source of truth; revoking a
+	// key evicts the hot-path cache so it takes effect immediately (TRD §11).
+	srv = srv.WithKeyAdmin(pgKeyStore, keyCache.Invalidate)
 	// Two-phase budget lifecycle (Task 3.1/3.2): capture/void settle the reservation
 	// the engine placed during authorize.
 	srv = srv.WithBudget(reserver)
