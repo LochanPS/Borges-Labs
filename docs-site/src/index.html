@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Trust Infrastructure — Authorize API</title>
+<meta name="description" content="Deterministic, signed APPROVE/DENY/REVIEW for AI-initiated transactions. Quickstart + /v1 API reference." />
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1a1d21; --muted: #5b6470; --line: #e6e8eb;
+    --card: #f7f8fa; --code-bg: #0f1419; --code-fg: #e6edf3; --accent: #3b5bdb;
+    --approve: #2b8a3e; --deny: #c92a2a; --review: #e67700;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0d1117; --fg:#e6edf3; --muted:#9aa4b2; --line:#232a33; --card:#161b22; --accent:#8aa2ff; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font-family:var(--sans); line-height:1.6; }
+  a { color:var(--accent); text-decoration:none; } a:hover { text-decoration:underline; }
+  .wrap { max-width: 860px; margin:0 auto; padding: 0 20px; }
+  header.hero { border-bottom:1px solid var(--line); padding: 56px 0 40px; }
+  .eyebrow { font-family:var(--mono); font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); }
+  h1 { font-size: clamp(28px, 5vw, 42px); line-height:1.15; margin:.3em 0 .2em; letter-spacing:-0.02em; }
+  .lede { font-size:18px; color:var(--muted); max-width:60ch; }
+  .cta { margin-top:24px; display:flex; gap:12px; flex-wrap:wrap; }
+  .btn { display:inline-block; padding:10px 16px; border-radius:8px; font-weight:600; font-size:14px; border:1px solid var(--line); }
+  .btn.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .btn.primary:hover { text-decoration:none; opacity:.92; }
+  h2 { font-size:24px; margin:48px 0 6px; letter-spacing:-0.01em; }
+  h2 .n { color:var(--muted); font-family:var(--mono); font-size:16px; margin-right:8px; }
+  h3 { font-size:16px; margin:24px 0 6px; }
+  p.sub { color:var(--muted); margin-top:0; }
+  .steps { counter-reset: step; list-style:none; padding:0; margin:24px 0 0; }
+  .steps > li { position:relative; padding:0 0 8px 44px; margin-bottom:28px; }
+  .steps > li::before {
+    counter-increment: step; content: counter(step);
+    position:absolute; left:0; top:0; width:30px; height:30px; border-radius:50%;
+    background:var(--accent); color:#fff; font-weight:700; font-size:14px;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .steps h3 { margin-top:2px; }
+  pre { background:var(--code-bg); color:var(--code-fg); padding:16px; border-radius:10px; overflow-x:auto; font-family:var(--mono); font-size:13px; line-height:1.55; margin:10px 0; }
+  code { font-family:var(--mono); }
+  p code, li code, td code { background:var(--card); border:1px solid var(--line); padding:.08em .4em; border-radius:5px; font-size:.9em; }
+  .tabs { display:flex; gap:4px; margin:10px 0 0; }
+  .tab { padding:6px 14px; border:1px solid var(--line); border-bottom:none; border-radius:8px 8px 0 0; background:var(--card); cursor:pointer; font-size:13px; font-weight:600; color:var(--muted); }
+  .tab[aria-selected="true"] { color:var(--fg); background:var(--code-bg); color:var(--code-fg); border-color:var(--code-bg); }
+  .panel[hidden] { display:none; }
+  .panel pre { margin-top:0; border-top-left-radius:0; }
+  table { border-collapse:collapse; width:100%; margin:14px 0; font-size:14px; }
+  th, td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+  .pill { font-family:var(--mono); font-weight:700; font-size:12px; padding:2px 8px; border-radius:6px; }
+  .pill.approve { color:var(--approve); background:color-mix(in srgb, var(--approve) 14%, transparent); }
+  .pill.deny { color:var(--deny); background:color-mix(in srgb, var(--deny) 14%, transparent); }
+  .pill.review { color:var(--review); background:color-mix(in srgb, var(--review) 14%, transparent); }
+  .note { background:var(--card); border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:8px; padding:12px 16px; margin:16px 0; font-size:14px; }
+  .note strong { color:var(--fg); }
+  footer { border-top:1px solid var(--line); margin-top:56px; padding:28px 0 48px; color:var(--muted); font-size:13px; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  @media (max-width:640px){ .grid2 { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<header class="hero"><div class="wrap">
+  <div class="eyebrow">Trust Infrastructure · /v1</div>
+  <h1>Authorize AI transactions before they move money.</h1>
+  <p class="lede">A deterministic, explainable, Ed25519-signed <strong>APPROVE / DENY / REVIEW</strong>
+  decision you call <em>before</em> your payment provider. This service never moves, holds, or settles money —
+  it answers the authorization question the payment rails don't.</p>
+  <div class="cta">
+    <a class="btn primary" href="./api.html">API Reference →</a>
+    <a class="btn" href="#quickstart">Quickstart</a>
+    <a class="btn" href="https://github.com/trust-infra/trust-infra">Source</a>
+  </div>
+</div></header>
+
+<main class="wrap">
+
+  <section id="quickstart">
+    <h2>Quickstart</h2>
+    <p class="sub">Key → first authorize in under 15 minutes. Seven steps.</p>
+
+    <ol class="steps">
+      <li>
+        <h3>Get an API key</h3>
+        <p>Mint a test key (test keys are advisory / shadow by default — they never block). Prefixes
+        are <code>azn_test_</code> and <code>azn_live_</code>; only <code>sha256(key)</code> is stored server-side.</p>
+        <pre><code>go run ./cmd/authz-keygen -env test -org org_demo -tier default
+# add -enforce to mint an enforcing key; -insert (with DATABASE_URL) to persist it</code></pre>
+        <p class="sub">Or create one in the dashboard (shown once, then revocable).</p>
+      </li>
+
+      <li>
+        <h3>Install the SDK</h3>
+        <div class="tabs" data-tabs="install">
+          <button class="tab" role="tab" aria-selected="true" data-lang="py">Python</button>
+          <button class="tab" role="tab" aria-selected="false" data-lang="ts">TypeScript</button>
+        </div>
+        <div class="panel" data-lang="py"><pre><code>pip install trust-infra-sdk</code></pre></div>
+        <div class="panel" data-lang="ts" hidden><pre><code>npm install @trust-infra/sdk</code></pre></div>
+      </li>
+
+      <li>
+        <h3>Point at the API and load the public keys</h3>
+        <p>The decision signature is verified against the published Ed25519 keys
+        (<code>GET /v1/keys/public</code>, JWKS). Pass them in, or let the SDK fetch them once.</p>
+        <div class="tabs" data-tabs="init">
+          <button class="tab" role="tab" aria-selected="true" data-lang="py">Python</button>
+          <button class="tab" role="tab" aria-selected="false" data-lang="ts">TypeScript</button>
+        </div>
+        <div class="panel" data-lang="py"><pre><code>from trust_infra import Client, OnUnavailable
+
+client = Client(
+    api_key="azn_test_...",
+    base_url="https://api.trust-infra.dev",   # or http://localhost:8080
+    on_unavailable=OnUnavailable.FAIL_CLOSED,  # default
+)</code></pre></div>
+        <div class="panel" data-lang="ts" hidden><pre><code>import { Client, OnUnavailable } from "@trust-infra/sdk";
+
+const client = new Client({
+  apiKey: "azn_test_...",
+  baseUrl: "https://api.trust-infra.dev", // or http://localhost:8080
+  onUnavailable: OnUnavailable.FailClosed, // default
+});</code></pre></div>
+      </li>
+
+      <li>
+        <h3>Authorize before your payment — and enforce the verdict</h3>
+        <p>The whole integration is three lines. The SDK canonicalizes + HMAC-signs the request,
+        verifies the signed decision, and <code>enforce()</code> throws unless the verdict is an enforceable APPROVE.</p>
+        <div class="tabs" data-tabs="authz">
+          <button class="tab" role="tab" aria-selected="true" data-lang="py">Python</button>
+          <button class="tab" role="tab" aria-selected="false" data-lang="ts">TypeScript</button>
+        </div>
+        <div class="panel" data-lang="py"><pre><code>txn = {
+    "agent_id": "procurement-agent-v2",
+    "action": "payment.create",
+    "amount": "1200.00",          # decimal STRING, never a float
+    "currency": "USD",
+    "target": {"type": "vendor", "id": "acme-supplies"},
+    "idempotency_key": "idem_01HXYZ...",
+}
+
+client.authorize(txn).enforce()   # raises DecisionDeniedError unless APPROVE
+charge(txn)                       # your existing payment call, reached only on APPROVE</code></pre></div>
+        <div class="panel" data-lang="ts" hidden><pre><code>const txn = {
+  agent_id: "procurement-agent-v2",
+  action: "payment.create",
+  amount: "1200.00",            // decimal STRING, never a float
+  currency: "USD",
+  target: { type: "vendor", id: "acme-supplies" },
+  idempotency_key: "idem_01HXYZ...",
+};
+
+(await client.authorize(txn)).enforce();  // throws unless APPROVE
+await charge(txn);                         // reached only on APPROVE</code></pre></div>
+      </li>
+
+      <li>
+        <h3>De-risk with shadow mode first</h3>
+        <p>Shadow mode evaluates and logs the decision but <strong>never blocks</strong>. Run it on one agent,
+        review the audit log, then flip to <code>authorize().enforce()</code>. (Test keys are shadow by default.)</p>
+        <div class="tabs" data-tabs="shadow">
+          <button class="tab" role="tab" aria-selected="true" data-lang="py">Python</button>
+          <button class="tab" role="tab" aria-selected="false" data-lang="ts">TypeScript</button>
+        </div>
+        <div class="panel" data-lang="py"><pre><code>decision = client.shadow(txn)     # evaluated + logged, never enforced
+log.info("would have been %s", decision.verdict.value)
+charge(txn)                       # payment path untouched</code></pre></div>
+        <div class="panel" data-lang="ts" hidden><pre><code>const decision = await client.shadow(txn); // evaluated + logged, never enforced
+console.log(`would have been ${decision.verdict}`);
+await charge(txn);                          // payment path untouched</code></pre></div>
+      </li>
+
+      <li>
+        <h3>Read the audit log</h3>
+        <p>Every decision is a stored, tamper-evident record. List them, or fetch one by id — the receipt is the demo.</p>
+        <pre><code>GET /v1/decisions?agent_id=procurement-agent-v2&verdict=DENY
+GET /v1/decisions/{decision_id}</code></pre>
+        <p class="sub">See the <a href="./api.html#tag/decisions">decisions endpoints</a> in the reference.</p>
+      </li>
+
+      <li>
+        <h3>Verify a decision signature</h3>
+        <p>Anyone — you, an auditor, a regulator — can verify a decision against the published Ed25519 public key,
+        with no shared secret. Tampering with any signed field fails verification.</p>
+        <div class="tabs" data-tabs="verify">
+          <button class="tab" role="tab" aria-selected="true" data-lang="py">Python</button>
+          <button class="tab" role="tab" aria-selected="false" data-lang="ts">TypeScript</button>
+        </div>
+        <div class="panel" data-lang="py"><pre><code>from trust_infra import verify_decision, SignatureVerificationError
+
+try:
+    verify_decision(decision, jwks)   # or client.verify_decision(decision)
+except SignatureVerificationError:
+    ...  # tampered or not ours — do not trust</code></pre></div>
+        <div class="panel" data-lang="ts" hidden><pre><code>import { verifyDecision, SignatureVerificationError } from "@trust-infra/sdk";
+
+try {
+  verifyDecision(decision, jwks);   // or client.verifyDecision(decision)
+} catch (e) {
+  if (e instanceof SignatureVerificationError) { /* tampered or not ours */ }
+}</code></pre></div>
+      </li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Verdicts</h2>
+    <p class="sub">Every authorize call returns exactly one verdict (all are HTTP 200). Combination algebra (TRD §5):
+    any hard DENY ⇒ DENY; else any REVIEW ⇒ REVIEW; else all-satisfied ⇒ APPROVE.</p>
+    <table>
+      <thead><tr><th>Verdict</th><th>Meaning</th><th>What the caller does</th></tr></thead>
+      <tbody>
+        <tr><td><span class="pill approve">APPROVE</span></td><td>All rules satisfied.</td><td>Proceed with the payment. Honor any obligations (e.g. <code>capture_within</code>).</td></tr>
+        <tr><td><span class="pill deny">DENY</span></td><td>A hard rule denied it.</td><td>Block. <code>enforce()</code> raises. Read <code>explanation</code> for the denying rule.</td></tr>
+        <tr><td><span class="pill review">REVIEW</span></td><td>Needs a human / step-up.</td><td>Hold for approval; do not auto-proceed. Not an APPROVE.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Fail-mode guidance</h2>
+    <p class="sub">The decision plane never guesses. When it's unreachable or returns 503, your
+    <code>on_unavailable</code> policy decides. Fail-mode results are synthetic, unsigned, and flagged
+    <code>degraded</code>.</p>
+    <table>
+      <thead><tr><th>Mode</th><th>When unavailable</th><th>Use when</th></tr></thead>
+      <tbody>
+        <tr><td><code>FAIL_CLOSED</code> <em>(default)</em></td><td>Synthetic DENY — <code>enforce()</code> blocks the payment.</td><td>The payment path. Safety first.</td></tr>
+        <tr><td><code>FAIL_OPEN</code></td><td>Synthetic APPROVE — explicit, logged, degraded, unsigned.</td><td>Availability &gt; control for this flow. Opt-in, eyes open.</td></tr>
+        <tr><td><code>LOCAL_CACHE</code></td><td>Replays the last signed decision for this <code>idempotency_key</code>; on a miss, fails closed.</td><td>Idempotent retries that must survive a brief outage.</td></tr>
+      </tbody>
+    </table>
+    <div class="note"><strong>Guarantee:</strong> the SDK never turns an upstream failure into a silent APPROVE.
+    The only way to approve during an outage is to explicitly choose <code>FAIL_OPEN</code>.</div>
+  </section>
+
+  <section>
+    <h2>Two signatures, kept distinct</h2>
+    <div class="grid2">
+      <div>
+        <h3>Request auth — HMAC (symmetric)</h3>
+        <p class="sub">Caller → us. <code>X-Api-Key</code>, <code>X-Signature</code> (HMAC-SHA256 over the
+        canonical payload), <code>X-Nonce</code>, <code>X-Timestamp</code>. The SDK does this for you.
+        Scheme <code>azn-hmac/1</code>.</p>
+      </div>
+      <div>
+        <h3>Decision receipt — Ed25519 (asymmetric)</h3>
+        <p class="sub">Us → everyone. The <code>Decision.signature</code> object, verifiable against the
+        published public key with no secret. Scheme <code>ti-decision-canon/1</code>. HMAC here would let a
+        key-holder forge decisions — forbidden.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Full API reference</h2>
+    <p class="sub">Generated from <code>contracts/openapi.v1.yaml</code> — always in sync with the contract.</p>
+    <p><a class="btn primary" href="./api.html">Open the /v1 API reference →</a></p>
+  </section>
+
+</main>
+
+<footer><div class="wrap">
+  Trust Infrastructure · /v1 · This service never moves, holds, or settles money.
+  Reference generated from the OpenAPI spec with Redocly. SDKs:
+  <a href="https://pypi.org/project/trust-infra-sdk/">Python</a> ·
+  <a href="https://www.npmjs.com/package/@trust-infra/sdk">TypeScript</a>.
+</div></footer>
+
+<script>
+  // Language tabs: clicking a tab switches every tab group on the page, so the reader
+  // picks Python or TypeScript once and the whole quickstart follows.
+  function selectLang(lang) {
+    document.querySelectorAll(".tab").forEach((t) => {
+      t.setAttribute("aria-selected", String(t.dataset.lang === lang));
+    });
+    document.querySelectorAll(".panel").forEach((p) => {
+      p.hidden = p.dataset.lang !== lang;
+    });
+    try { localStorage.setItem("ti-lang", lang); } catch {}
+  }
+  document.addEventListener("click", (e) => {
+    const tab = e.target.closest(".tab");
+    if (tab) selectLang(tab.dataset.lang);
+  });
+  try {
+    const saved = localStorage.getItem("ti-lang");
+    if (saved === "py" || saved === "ts") selectLang(saved);
+  } catch {}
+</script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+{
+  "name": "trust-infra-docs",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Landing + quickstart + auto-generated /v1 API reference (from contracts/openapi.v1.yaml).",
+  "type": "module",
+  "scripts": {
+    "lint": "redocly lint ../contracts/openapi.v1.yaml",
+    "bundle": "redocly bundle ../contracts/openapi.v1.yaml -o public/openapi.bundled.json",
+    "build:api": "redocly build-docs ../contracts/openapi.v1.yaml -o public/api.html",
+    "build": "node build.mjs",
+    "serve": "node serve.mjs"
+  },
+  "devDependencies": {
+    "@redocly/cli": "^1.25.0"
+  }
+}

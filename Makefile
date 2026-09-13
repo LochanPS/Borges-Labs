@@ -8,7 +8,8 @@ COMMIT    ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 DATE      ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS   := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
 
-.PHONY: help up down logs run build test tidy fmt vet
+.PHONY: help up down logs run build test tidy fmt vet \
+        gen-ts test-contracts test-python test-ts docs test-all
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-10s %s\n", $$1, $$2}'
@@ -39,3 +40,21 @@ fmt: ## Format Go code
 
 vet: ## Static checks
 	cd $(SVC_DIR) && go vet ./...
+
+gen-ts: ## Regenerate TypeScript contract types from /contracts schemas
+	node contracts/tools/gen-ts.mjs
+
+test-contracts: ## Validate contracts (schemas+examples+OpenAPI) and the generated Go types
+	python contracts/tools/validate.py
+	cd contracts/gen/go && go test ./...
+
+test-python: ## Test the Python SDK
+	cd sdks/python && python -m pytest -q
+
+test-ts: ## Build + test the TypeScript SDK
+	cd sdks/ts && npm install && npm run build && npm test
+
+docs: ## Build the docs site (API reference generated from the OpenAPI spec)
+	cd docs-site && npm install && npm run build
+
+test-all: test test-contracts test-python test-ts ## Run every test suite in the repo

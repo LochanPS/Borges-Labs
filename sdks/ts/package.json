@@ -1,0 +1,50 @@
+{
+  "name": "@trust-infra/sdk",
+  "version": "1.0.0",
+  "description": "TypeScript/Node SDK for the AI Transaction Authorization Infrastructure /v1 API: canonicalize + HMAC-sign requests, verify Ed25519 decision signatures, explicit fail-mode control.",
+  "license": "UNLICENSED",
+  "private": false,
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "authorization",
+    "payments",
+    "agents",
+    "ed25519",
+    "audit",
+    "compliance"
+  ],
+  "homepage": "https://trust-infra.dev",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/trust-infra/trust-infra"
+  },
+  "scripts": {
+    "gen:types": "node ../../contracts/tools/gen-ts.mjs",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test test/*.test.ts",
+    "example": "node --import tsx examples/quickstart.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2"
+  }
+}

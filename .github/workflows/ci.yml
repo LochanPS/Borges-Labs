@@ -34,6 +34,88 @@ jobs:
       - name: Test
         run: go test -race ./...
 
+  contracts:
+    name: contracts (schemas + examples + OpenAPI + Go types)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache: false
+      - name: Install validator deps
+        run: pip install "jsonschema>=4.18" referencing openapi-spec-validator pyyaml
+      - name: Validate contracts
+        run: python contracts/tools/validate.py
+      - name: Test generated Go types
+        working-directory: contracts/gen/go
+        run: go test ./...
+
+  python-sdk:
+    name: python-sdk (pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: pip install -e ".[test]"
+      - name: Test
+        run: python -m pytest -q
+      - name: Build sdist + wheel
+        run: |
+          pip install build
+          python -m build
+
+  ts-sdk:
+    name: ts-sdk (build + test + gen drift)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Regenerate contract types and check for drift
+        run: |
+          node contracts/tools/gen-ts.mjs
+          git diff --exit-code contracts/gen/ts sdks/ts/src/contracts/generated.ts \
+            || (echo "generated types are stale; run: node contracts/tools/gen-ts.mjs" && exit 1)
+      - name: Install
+        working-directory: sdks/ts
+        run: npm ci
+      - name: Build
+        working-directory: sdks/ts
+        run: npm run build
+      - name: Test
+        working-directory: sdks/ts
+        run: npm test
+      - name: Pack
+        working-directory: sdks/ts
+        run: npm pack --dry-run
+
+  docs:
+    name: docs (generated from OpenAPI)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: docs-site
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install
+        run: npm ci
+      - name: Build docs (lint + bundle + build-docs)
+        run: npm run build
+
   compose-smoke:
     name: docker compose boots PG + Redis + service
     runs-on: ubuntu-latest

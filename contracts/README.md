@@ -25,7 +25,10 @@ contracts/
     policy.example.json
   gen/go/                         generated Go structs (module
                                   github.com/trust-infra/contracts/gen/go)
+  gen/ts/                         generated TypeScript types (contractsv1/types.ts),
+                                  emitted by tools/gen-ts.mjs; the TS SDK vendors a copy
   tools/validate.py               contract test: schemas + examples + OpenAPI
+  tools/gen-ts.mjs                zero-dep TS type generator (schemas -> gen/ts + SDK)
 ```
 
 Canonicalization of the Ed25519 decision signature: see
@@ -75,5 +78,11 @@ Build + test the generated Go types:
 cd contracts/gen/go && go test ./...
 ```
 
-SDK types (Python, TS) are generated from these schemas later (ROADMAP Phase 4); the
-Go structs in `gen/go` are the reference binding.
+Regenerate the TypeScript types after a schema change (zero-dependency, Node only):
+
+```bash
+node contracts/tools/gen-ts.mjs
+```
+
+The Go structs in `gen/go` are the reference binding; `gen/ts` mirrors them for the TS
+SDK (Task 4.2) and the dashboard. The Python SDK (Task 4.1) binds the same schemas.

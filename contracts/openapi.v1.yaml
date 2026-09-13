@@ -484,7 +484,7 @@ paths:
                       properties:
                         kty: { type: string, const: OKP, description: Key type (Octet Key Pair). }
                         crv: { type: string, const: Ed25519 }
-                        kid: { type: string, description: Key id, matches Decision.signature.key_id. }
+                        kid: { type: string, description: "Key id, matches Decision.signature.key_id." }
                         x: { type: string, description: base64url-encoded public key. }
                         use: { type: string, const: sig }
                         status:
