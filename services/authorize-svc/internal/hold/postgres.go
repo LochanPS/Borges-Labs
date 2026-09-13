@@ -180,8 +180,8 @@ type rowScanner interface {
 
 func scanHold(row rowScanner) (*Hold, error) {
 	var (
-		h                    Hold
-		captured, voided     *time.Time
+		h                Hold
+		captured, voided *time.Time
 	)
 	err := row.Scan(
 		&h.OrgID, &h.DecisionID, &h.AgentID, &h.BudgetID, &h.Window, &h.WindowKey, &h.Amount, &h.Currency,

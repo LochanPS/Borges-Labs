@@ -18,9 +18,9 @@ import (
 
 	"github.com/trust-infra/authorize-svc/internal/audit"
 	"github.com/trust-infra/authorize-svc/internal/auth"
+	"github.com/trust-infra/authorize-svc/internal/budget"
 	"github.com/trust-infra/authorize-svc/internal/bundle"
 	"github.com/trust-infra/authorize-svc/internal/config"
-	"github.com/trust-infra/authorize-svc/internal/budget"
 	"github.com/trust-infra/authorize-svc/internal/engine"
 	"github.com/trust-infra/authorize-svc/internal/hold"
 	"github.com/trust-infra/authorize-svc/internal/idempotency"

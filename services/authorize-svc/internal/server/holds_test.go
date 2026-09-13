@@ -43,7 +43,7 @@ func (h *cpHarness) authorizeEnforce(t *testing.T, amount, idem string) contract
 	t.Helper()
 	body := mustJSON(t, contractsv1.AuthorizeRequest{
 		AgentID: "agent-a", Action: "payment.create", Amount: amount, Currency: "USD",
-		Target: contractsv1.Target{Type: contractsv1.TargetVendor, ID: "acme"},
+		Target:         contractsv1.Target{Type: contractsv1.TargetVendor, ID: "acme"},
 		IdempotencyKey: idem,
 	})
 	resp, respBody := do(t, h.sign(t, http.MethodPost, "/v1/authorize", body, h.enforce))

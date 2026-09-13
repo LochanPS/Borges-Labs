@@ -129,16 +129,16 @@ type BundleRef struct {
 // edit yields a new hash. ParentHash records which version was active when this one
 // was published, giving the version history a lineage independent of wall-clock order.
 type Version struct {
-	VersionHash string               `json:"version_hash"`
-	PolicyID    string               `json:"policy_id"`
-	OrgID       string               `json:"org_id"`
-	Name        string               `json:"name"`
-	Agents      []string             `json:"agents"`
-	Rules       []Rule               `json:"rules"`
+	VersionHash string                `json:"version_hash"`
+	PolicyID    string                `json:"policy_id"`
+	OrgID       string                `json:"org_id"`
+	Name        string                `json:"name"`
+	Agents      []string              `json:"agents"`
+	Rules       []Rule                `json:"rules"`
 	Signature   contractsv1.Signature `json:"signature"`
-	Author      string               `json:"author"`
-	ParentHash  string               `json:"parent_hash,omitempty"`
-	PublishedAt time.Time            `json:"published_at"`
+	Author      string                `json:"author"`
+	ParentHash  string                `json:"parent_hash,omitempty"`
+	PublishedAt time.Time             `json:"published_at"`
 }
 
 // signedView is the exact, ordered field set folded into the version hash and covered
@@ -147,11 +147,11 @@ type Version struct {
 // ruleset) and so a signature cannot be lifted onto a different policy. Excludes
 // server-assigned/mutable fields (author, published_at, parent_hash, status).
 type signedView struct {
-	PolicyID string `json:"policy_id"`
-	OrgID    string `json:"org_id"`
-	Name     string `json:"name"`
+	PolicyID string   `json:"policy_id"`
+	OrgID    string   `json:"org_id"`
+	Name     string   `json:"name"`
 	Agents   []string `json:"agents"`
-	Rules    []Rule `json:"rules"`
+	Rules    []Rule   `json:"rules"`
 }
 
 // CanonicalMessage returns the exact bytes hashed and signed for a version, per

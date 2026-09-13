@@ -28,17 +28,17 @@ func TestValidate_AllNineTypes(t *testing.T) {
 
 func TestValidate_Rejections(t *testing.T) {
 	cases := map[string][]Rule{
-		"missing max":            {{ID: "a", Type: "per_transaction_limit"}},
-		"empty allowlist":        {{ID: "a", Type: "vendor_allowlist", Vendors: []string{}}},
-		"permission needs one":   {{ID: "a", Type: "agent_permission"}},
-		"time out of range":      {{ID: "a", Type: "time_window", StartMinute: i(0), EndMinute: i(2000)}},
-		"weekday out of range":   {{ID: "a", Type: "time_window", StartMinute: i(0), EndMinute: i(60), Weekdays: []int{9}}},
-		"unknown type":           {{ID: "a", Type: "wormhole"}},
-		"field not for type":     {{ID: "a", Type: "vendor_blocklist", Vendors: []string{"x"}, Max: "5"}},
-		"bad currency":           {{ID: "a", Type: "per_transaction_limit", Max: "5", Currency: "usd"}},
-		"budget bad window":      {{ID: "a", Type: "rolling_budget", Window: "fortnight", Limit: "5"}},
-		"bad fail_mode":          {{ID: "a", Type: "sanctions_screen", FailMode: "maybe"}},
-		"jurisdiction bad key":   {{ID: "a", Type: "jurisdiction_currency", Allowed: map[string][]string{"USA": {"USD"}}}},
+		"missing max":          {{ID: "a", Type: "per_transaction_limit"}},
+		"empty allowlist":      {{ID: "a", Type: "vendor_allowlist", Vendors: []string{}}},
+		"permission needs one": {{ID: "a", Type: "agent_permission"}},
+		"time out of range":    {{ID: "a", Type: "time_window", StartMinute: i(0), EndMinute: i(2000)}},
+		"weekday out of range": {{ID: "a", Type: "time_window", StartMinute: i(0), EndMinute: i(60), Weekdays: []int{9}}},
+		"unknown type":         {{ID: "a", Type: "wormhole"}},
+		"field not for type":   {{ID: "a", Type: "vendor_blocklist", Vendors: []string{"x"}, Max: "5"}},
+		"bad currency":         {{ID: "a", Type: "per_transaction_limit", Max: "5", Currency: "usd"}},
+		"budget bad window":    {{ID: "a", Type: "rolling_budget", Window: "fortnight", Limit: "5"}},
+		"bad fail_mode":        {{ID: "a", Type: "sanctions_screen", FailMode: "maybe"}},
+		"jurisdiction bad key": {{ID: "a", Type: "jurisdiction_currency", Allowed: map[string][]string{"USA": {"USD"}}}},
 	}
 	for name, rules := range cases {
 		t.Run(name, func(t *testing.T) {

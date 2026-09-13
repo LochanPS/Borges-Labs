@@ -48,10 +48,10 @@ func (s *PostgresStore) GetPolicy(ctx context.Context, orgID, id string) (*Polic
 		SELECT id, org_id, name, agents, rules, status, active_version_hash, created_at, updated_at
 		FROM policies WHERE org_id=$1 AND id=$2`
 	var (
-		p                    Policy
+		p                     Policy
 		agentsJSON, rulesJSON []byte
-		active               *string
-		status               string
+		active                *string
+		status                string
 	)
 	err := s.pool.QueryRow(ctx, q, orgID, id).Scan(
 		&p.ID, &p.OrgID, &p.Name, &agentsJSON, &rulesJSON, &status, &active, &p.CreatedAt, &p.UpdatedAt,
@@ -106,10 +106,10 @@ func (s *PostgresStore) ListPolicies(ctx context.Context, orgID string) ([]*Poli
 	out := make([]*Policy, 0)
 	for rows.Next() {
 		var (
-			p                    Policy
+			p                     Policy
 			agentsJSON, rulesJSON []byte
-			active               *string
-			status               string
+			active                *string
+			status                string
 		)
 		if err := rows.Scan(
 			&p.ID, &p.OrgID, &p.Name, &agentsJSON, &rulesJSON, &status, &active, &p.CreatedAt, &p.UpdatedAt,

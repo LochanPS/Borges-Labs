@@ -66,7 +66,7 @@ func TestReserver_NoOversell(t *testing.T) {
 	r, _ := newReserver()
 	ctx := context.Background()
 	const limit = "100.00" // 10000 cents
-	const each = "10.00"    // 1000 cents → at most 10 fit
+	const each = "10.00"   // 1000 cents → at most 10 fit
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -162,6 +162,6 @@ type errCounter struct{}
 func (errCounter) Reserve(context.Context, string, int64, int64, time.Duration, bool) (bool, int64, error) {
 	return false, 0, errors.New("redis down")
 }
-func (errCounter) Release(context.Context, string, int64) error           { return nil }
+func (errCounter) Release(context.Context, string, int64) error            { return nil }
 func (errCounter) Set(context.Context, string, int64, time.Duration) error { return nil }
-func (errCounter) Get(context.Context, string) (int64, error)             { return 0, nil }
+func (errCounter) Get(context.Context, string) (int64, error)              { return 0, nil }

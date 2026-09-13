@@ -158,7 +158,7 @@ func TestControlPlane_CreatePublishActiveAndDecide(t *testing.T) {
 	// A live decision cites the just-published bundle (publish invalidated the cache).
 	azBody := mustJSON(t, contractsv1.AuthorizeRequest{
 		AgentID: "agent-a", Action: "payment.create", Amount: "100.00", Currency: "USD",
-		Target: contractsv1.Target{Type: contractsv1.TargetVendor, ID: "acme"},
+		Target:         contractsv1.Target{Type: contractsv1.TargetVendor, ID: "acme"},
 		IdempotencyKey: "idem_cp_decide_1",
 	})
 	resp, body = do(t, h.sign(t, http.MethodPost, "/v1/authorize", azBody, h.active))

@@ -52,7 +52,7 @@ func TestShadow_KeyDecisionSignaledAndAudited(t *testing.T) {
 func simReq(amount, idem string) contractsv1.AuthorizeRequest {
 	return contractsv1.AuthorizeRequest{
 		AgentID: "agent-a", Action: "payment.create", Amount: amount, Currency: "USD",
-		Target: contractsv1.Target{Type: contractsv1.TargetVendor, ID: "acme"},
+		Target:         contractsv1.Target{Type: contractsv1.TargetVendor, ID: "acme"},
 		IdempotencyKey: idem,
 	}
 }
@@ -84,7 +84,7 @@ func TestControlPlane_Simulate(t *testing.T) {
 	simBody := mustJSON(t, map[string]any{
 		"version_hash": ver.VersionHash,
 		"requests": []contractsv1.AuthorizeRequest{
-			simReq("100.00", "idem_sim_ok_1"),   // within 5000 limit → APPROVE
+			simReq("100.00", "idem_sim_ok_1"),    // within 5000 limit → APPROVE
 			simReq("6000.00", "idem_sim_over_1"), // over limit → DENY
 		},
 	})

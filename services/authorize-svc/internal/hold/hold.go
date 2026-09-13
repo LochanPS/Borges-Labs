@@ -48,8 +48,8 @@ type Hold struct {
 	OrgID      string    `json:"org_id"`
 	AgentID    string    `json:"agent_id"`
 	BudgetID   string    `json:"budget_id"`
-	Window     string    `json:"window"`      // day | month | rolling
-	WindowKey  string    `json:"window_key"`  // concrete period, e.g. 2026-09
+	Window     string    `json:"window"`     // day | month | rolling
+	WindowKey  string    `json:"window_key"` // concrete period, e.g. 2026-09
 	Amount     string    `json:"amount"`
 	Currency   string    `json:"currency"`
 	State      State     `json:"state"`

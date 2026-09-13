@@ -71,14 +71,14 @@ const maxSimulateRequests = 500
 type simulateRequest struct {
 	// VersionHash selects a published version to dry-run; empty means the current
 	// working copy (draft).
-	VersionHash string                          `json:"version_hash"`
+	VersionHash string                         `json:"version_hash"`
 	Requests    []contractsv1.AuthorizeRequest `json:"requests"`
 }
 
 type simulateResponse struct {
-	VersionHash string                   `json:"version_hash"` // the version label evaluated
-	Shadow      bool                     `json:"shadow"`       // always true: results are advisory
-	Results     []contractsv1.Decision   `json:"results"`
+	VersionHash string                 `json:"version_hash"` // the version label evaluated
+	Shadow      bool                   `json:"shadow"`       // always true: results are advisory
+	Results     []contractsv1.Decision `json:"results"`
 }
 
 type policyListResponse struct {
