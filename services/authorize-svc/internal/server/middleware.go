@@ -45,6 +45,25 @@ func (s *Server) requestID(next http.Handler) http.Handler {
 	})
 }
 
+// secureHeaders sets defense-in-depth response headers on every response (TRD §20).
+// This is a JSON API, not a browser app, but the headers are cheap and close off
+// clickjacking / MIME-sniffing / referrer-leak vectors for any tooling that renders a
+// response. A handler may still override a specific header afterwards (e.g. the public
+// JWKS route sets its own Cache-Control).
+func (s *Server) secureHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "no-referrer")
+		// Meaningful over TLS (production/ingress); harmless otherwise.
+		h.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+		// API returns JSON only — lock the document down entirely.
+		h.Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+		next.ServeHTTP(w, r)
+	})
+}
+
 // reqID returns the request id stashed by the requestID middleware ("" if unset).
 func reqID(r *http.Request) string {
 	if v, ok := r.Context().Value(ctxKeyReqID).(string); ok {

@@ -182,7 +182,7 @@ func (s *Server) Handler() http.Handler {
 	// Catch-all: anything unrouted is a 7807 404 (not Go's plain-text default).
 	mux.HandleFunc("/", s.handleNotFound)
 
-	return s.requestID(s.recoverPanic(s.logRequests(mux)))
+	return s.requestID(s.secureHeaders(s.recoverPanic(s.logRequests(mux))))
 }
 
 type healthResponse struct {
