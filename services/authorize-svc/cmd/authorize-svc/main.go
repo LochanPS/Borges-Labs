@@ -31,6 +31,7 @@ import (
 	"github.com/trust-infra/authorize-svc/internal/server"
 	"github.com/trust-infra/authorize-svc/internal/signing"
 	"github.com/trust-infra/authorize-svc/internal/store"
+	"github.com/trust-infra/authorize-svc/internal/tracing"
 )
 
 // decodeSeed decodes a 32-byte Ed25519 seed from base64 (std or url) or hex.
@@ -62,6 +63,26 @@ func main() {
 
 	log.Info("starting", "service", "authorize-svc",
 		"version", build.Version, "commit", build.Commit, "addr", cfg.Addr)
+
+	// OpenTelemetry tracing (TRD §18). Off unless AUTHZ_TRACE_EXPORTER is set
+	// (stdout|otlp). OTLP honors OTEL_EXPORTER_OTLP_ENDPOINT. Shutdown flushes spans.
+	traceShutdown, terr := tracing.Init(context.Background(), tracing.Config{
+		Version:  build.Version,
+		Exporter: os.Getenv("AUTHZ_TRACE_EXPORTER"),
+		Endpoint: os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+	})
+	if terr != nil {
+		log.Error("tracing init failed", "err", terr)
+		os.Exit(1)
+	}
+	defer func() {
+		sctx, scancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer scancel()
+		_ = traceShutdown(sctx)
+	}()
+	if exp := os.Getenv("AUTHZ_TRACE_EXPORTER"); exp != "" {
+		log.Info("tracing enabled", "exporter", exp)
+	}
 
 	// Connect to backing stores. Fail fast if either is unreachable at boot.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

@@ -100,6 +100,13 @@ reports healthy while blind to a store.
 | `AUTHZ_ADDR` | listen address | `:8080` |
 | `AUTHZ_SIGNING_PRIVATE_KEY` | base64/hex Ed25519 seed; empty = generate a dev key at boot | *(empty)* |
 | `LOG_LEVEL` | debug/info/warn/error | `info` |
+| `AUTHZ_TRACE_EXPORTER` | OpenTelemetry exporter: `stdout`, `otlp`, or empty (off) | *(empty)* |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP collector URL when `AUTHZ_TRACE_EXPORTER=otlp` | *(env default)* |
+
+Metrics: Prometheus text at `GET /metrics` (verdict distribution, decision-latency
+histogram, rate-limit rejections). Tracing (off by default) emits an HTTP server span
+and a nested `engine.authorize` span per request; set `AUTHZ_TRACE_EXPORTER=stdout` to
+see them locally, or `otlp` + `OTEL_EXPORTER_OTLP_ENDPOINT` to ship to a collector.
 
 Auth, rate-limit, and signing knobs: see `deploy/.env.example`,
 `docs/request-authentication.md`, `docs/rate-limiting.md`.

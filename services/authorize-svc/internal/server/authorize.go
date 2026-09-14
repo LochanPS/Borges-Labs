@@ -8,7 +8,12 @@ import (
 	"regexp"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+
 	"github.com/trust-infra/authorize-svc/internal/audit"
+	"github.com/trust-infra/authorize-svc/internal/tracing"
 	contractsv1 "github.com/trust-infra/contracts/gen/go/contractsv1"
 )
 
@@ -88,13 +93,27 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		shadow = principal.Shadow
 	}
 
-	decision, err := s.authz.Authorize(r.Context(), orgID, req, shadow)
+	evalCtx, span := otel.Tracer(tracing.ServiceName).Start(r.Context(), "engine.authorize")
+	span.SetAttributes(
+		attribute.String("agent.id", req.AgentID),
+		attribute.String("action", req.Action),
+		attribute.Bool("shadow", shadow),
+	)
+	decision, err := s.authz.Authorize(evalCtx, orgID, req, shadow)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "authorize failed")
+		span.End()
 		reqLogger(r).Error("authorize failed", "err", err)
 		s.writeProblem(w, r, http.StatusServiceUnavailable, codeInternal,
 			"Decision unavailable", "The decision plane could not produce a decision.", nil)
 		return
 	}
+	span.SetAttributes(
+		attribute.String("verdict", string(decision.Verdict)),
+		attribute.Int("latency_ms", decision.LatencyMs),
+	)
+	span.End()
 
 	// Record the decision under its idempotency key BEFORE responding, so a retry
 	// that races the client's receipt still resolves to this decision. The budget hold
