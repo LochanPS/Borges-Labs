@@ -1,0 +1,44 @@
+# Fly.io deploy config for the authorize-svc decision plane.
+#
+# Build context must be the REPO ROOT (the Dockerfile binds the in-repo contracts
+# module), so deploy from the repo root and point Fly at this config + Dockerfile:
+#
+#   fly launch --no-deploy --copy-config --config deploy/fly.toml   # first time
+#   fly secrets set DATABASE_URL=... REDIS_URL=... \
+#       AUTHZ_SIGNING_PRIVATE_KEY=... AUTHZ_AUDIT_ENCRYPTION_KEY=...
+#   fly deploy . --config deploy/fly.toml --dockerfile services/authorize-svc/Dockerfile
+#
+# DATABASE_URL / REDIS_URL and the two keys are SECRETS — set them with
+# `fly secrets set`, never in this file.
+
+app = "trust-infra-authorize"
+primary_region = "iad"
+
+[build]
+  dockerfile = "services/authorize-svc/Dockerfile"
+
+[env]
+  AUTHZ_ADDR = ":8080"
+  LOG_LEVEL = "info"
+  AUTHZ_CONTROL_PLANE_ENABLED = "true"
+  # Tracing off by default; set to "otlp" and add OTEL_EXPORTER_OTLP_ENDPOINT to ship spans.
+  AUTHZ_TRACE_EXPORTER = ""
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/health"
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "10s"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512

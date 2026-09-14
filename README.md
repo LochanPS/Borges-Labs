@@ -64,13 +64,26 @@ Full walkthrough (host-run mode, tests, teardown): [docs/running-locally.md](doc
 
 ## Observability
 
-Structured **JSON logging from day one** (TRD §18) via Go's `log/slog` — one JSON
-line per request and per lifecycle event, to stdout for an aggregator.
+- Structured **JSON logging** (TRD §18) via `log/slog` — one line per request/lifecycle event.
+- **Metrics:** Prometheus text at `GET /metrics` (verdict distribution, decision-latency
+  histogram, rate-limit rejections).
+- **Tracing:** OpenTelemetry, off by default — an HTTP server span + a nested
+  `engine.authorize` span per request. Enable with `AUTHZ_TRACE_EXPORTER=stdout|otlp`.
+- The dashboard `/status` page polls `/v1/health`.
+
+## Deploy
+
+Production deploy (managed Postgres/Redis, Fly/Railway for authorize-svc, Vercel for the
+dashboard): [`deploy/DEPLOY.md`](deploy/DEPLOY.md). Configs in [`deploy/`](deploy):
+`fly.toml`, `railway.json`, `apply-migrations.sh`; `services/dashboard/vercel.json`.
 
 ## CI
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) on every push / PR:
 - **authorize-svc:** `gofmt` check → `go vet` → build → `go test -race`.
+- **contracts:** validate schemas + examples + OpenAPI, and the generated Go types.
+- **python-sdk / ts-sdk:** test + build (ts also checks generated-type drift).
+- **dashboard:** Next.js build + client-side signature-verify tests.
 - **compose-smoke:** `docker compose up`, then polls until `/health` returns 200.
 
 ## Acceptance (Task 0.1)
