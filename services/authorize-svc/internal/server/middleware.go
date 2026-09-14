@@ -161,6 +161,9 @@ func (s *Server) rateLimit(next http.Handler) http.Handler {
 				secs = 1
 			}
 			w.Header().Set("Retry-After", strconv.Itoa(secs))
+			if s.metrics != nil {
+				s.metrics.RecordRateLimited()
+			}
 			reqLogger(r).Warn("rate limited", "key_id", principal.KeyID, "scope", d.Scope, "limit", d.Limit)
 			s.writeProblem(w, r, http.StatusTooManyRequests, codeRateLimited,
 				"Rate limit exceeded", "You have exceeded the "+d.Scope+" rate limit for your key.", nil)

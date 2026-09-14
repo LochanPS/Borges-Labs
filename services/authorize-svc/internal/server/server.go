@@ -20,6 +20,7 @@ import (
 
 	"github.com/trust-infra/authorize-svc/internal/audit"
 	"github.com/trust-infra/authorize-svc/internal/auth"
+	"github.com/trust-infra/authorize-svc/internal/metrics"
 	"github.com/trust-infra/authorize-svc/internal/policyctl"
 	"github.com/trust-infra/authorize-svc/internal/ratelimit"
 	contractsv1 "github.com/trust-infra/contracts/gen/go/contractsv1"
@@ -87,6 +88,9 @@ type Server struct {
 	// mounted; keyCacheInvalidate (optional) evicts the hot-path key cache on revoke.
 	keyAdmin           auth.KeyAdmin
 	keyCacheInvalidate keyCacheInvalidate
+
+	// metrics records operational signals exposed at GET /metrics (TRD §18). Always set.
+	metrics *metrics.Metrics
 }
 
 // IdempotencyStore caches a decision by (org, idempotency_key). Implementations:
@@ -127,7 +131,7 @@ func (s *Server) WithIdempotency(store IdempotencyStore) *Server {
 // Authenticator (request auth — TRD §11), the rate Limiter and its tier table
 // (Task 1.3), and one Check per backing store.
 func New(log *slog.Logger, build BuildInfo, authz Authorizer, authn *auth.Authenticator, limiter ratelimit.Limiter, tiers ratelimit.TierTable, checks ...Check) *Server {
-	return &Server{log: log, build: build, authz: authz, authn: authn, limiter: limiter, tiers: tiers, checks: checks}
+	return &Server{log: log, build: build, authz: authz, authn: authn, limiter: limiter, tiers: tiers, checks: checks, metrics: metrics.New(build.Version)}
 }
 
 // Handler returns the fully wired HTTP handler, middleware and all.
@@ -179,6 +183,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/health", s.method(http.MethodGet, s.handleHealth))
 	// Convenience alias for infra probes that hit the bare path.
 	mux.HandleFunc("/health", s.method(http.MethodGet, s.handleHealth))
+	// Prometheus metrics (TRD §18). Unauthenticated for scraping; restrict at the
+	// network layer in production.
+	mux.HandleFunc("/metrics", s.method(http.MethodGet, s.handleMetrics))
 	// Catch-all: anything unrouted is a 7807 404 (not Go's plain-text default).
 	mux.HandleFunc("/", s.handleNotFound)
 

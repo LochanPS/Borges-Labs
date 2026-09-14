@@ -11,7 +11,11 @@ APIs (Task 5.1). Four areas:
    **Verify signature** button that validates the Ed25519 receipt client-side against the
    published public key. A "Simulate tamper" control shows detection.
 
-Plus **API keys**: create-once secret reveal + revoke.
+Plus **API keys** (create-once secret reveal + revoke) and a **Status** page that polls
+the decision plane's `/v1/health` (via a same-origin `/api/health` proxy) every 5s.
+
+The decision plane also exposes Prometheus metrics at `GET /metrics` (verdict
+distribution, decision-latency histogram, rate-limit rejections) for scraping.
 
 Types are the generated contract types (`src/lib/contracts/generated.ts`, produced by
 `contracts/tools/gen-ts.mjs`) — the same source the TS SDK and `contracts/gen/ts` use.

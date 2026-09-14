@@ -102,6 +102,10 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	// idempotency replay above so a retry never double-reserves.
 	s.saveIdempotent(r, req, decision)
 
+	if s.metrics != nil {
+		s.metrics.RecordDecision(string(decision.Verdict), decision.LatencyMs)
+	}
+
 	w.Header().Set("X-Decision-Id", decision.DecisionID)
 	if decision.Shadow {
 		// Advisory/log-only: an extra signal alongside the signed shadow field so a
