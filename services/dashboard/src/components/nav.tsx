@@ -2,10 +2,11 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { ShieldCheck, LayoutDashboard, FileCog, ScrollText, KeyRound, Activity, Bot, Play } from "lucide-react";
+import { ShieldCheck, LayoutDashboard, FileCog, ScrollText, KeyRound, Activity, Bot, Play, Rocket } from "lucide-react";
 
 const LINKS = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
+  { href: "/onboarding", label: "Connect agent", icon: Rocket },
   { href: "/policies", label: "Policies", icon: FileCog },
   { href: "/agents", label: "Agents", icon: Bot },
   { href: "/audit", label: "Audit log", icon: ScrollText },

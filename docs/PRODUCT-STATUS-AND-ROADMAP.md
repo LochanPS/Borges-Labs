@@ -123,6 +123,12 @@ Agents exist only as strings inside policies/decisions. Operators need a first-c
 
 1. **M1 — Self-serve onboarding**: org/user model + RBAC + signup + "connect your agent"
    wizard. Unblocks design partners without hand-holding. _(P0)_
+   - **In progress:** org bootstrap endpoint `POST /v1/provision/keys` (platform-token
+     auth, mints a new org's first key); dashboard RBAC (owner/admin/developer/viewer,
+     Clerk-or-dev identity, admin-gated mutations); `/onboarding` connect-your-agent
+     wizard (create key → SDK snippet → run). **Remaining (M1b):** map each Clerk org to
+     its own provisioned key so the dashboard calls authorize-svc per-org (needs a small
+     dashboard datastore) instead of one shared admin key.
 2. **M2 — Agent management + usage view**: `/agents` with per-agent enforce toggle; usage
    metering surfaced. _(P0/P1)_
 3. **M3 — REVIEW queue**: approvals endpoints + dashboard queue. _(P1)_

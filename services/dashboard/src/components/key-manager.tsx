@@ -7,7 +7,7 @@ import { createKeyAction, revokeKeyAction } from "@/lib/actions";
 import { formatTime } from "@/lib/utils";
 import type { ApiKey } from "@/lib/contracts";
 
-export function KeyManager({ keys }: { keys: ApiKey[] }) {
+export function KeyManager({ keys, canManage = true }: { keys: ApiKey[]; canManage?: boolean }) {
   const [state, formAction, pending] = useActionState(createKeyAction, null);
   const [copied, setCopied] = React.useState(false);
   const secret = state?.key?.secret;
@@ -25,6 +25,7 @@ export function KeyManager({ keys }: { keys: ApiKey[] }) {
 
   return (
     <div className="space-y-6">
+      {canManage && (
       <Card>
         <CardHeader><CardTitle>Create a key</CardTitle></CardHeader>
         <CardBody>
@@ -60,6 +61,7 @@ export function KeyManager({ keys }: { keys: ApiKey[] }) {
           )}
         </CardBody>
       </Card>
+      )}
 
       <Card>
         <CardHeader><CardTitle>Keys</CardTitle></CardHeader>
@@ -84,7 +86,7 @@ export function KeyManager({ keys }: { keys: ApiKey[] }) {
                   <Td className="mono text-xs text-[var(--muted)]">{formatTime(k.created_at)}</Td>
                   <Td className="mono text-xs text-[var(--muted)]">{k.revoked_at ? formatTime(k.revoked_at) : "—"}</Td>
                   <Td>
-                    {k.is_active && (
+                    {k.is_active && canManage && (
                       <form action={revokeKeyAction.bind(null, k.id)}>
                         <button className="inline-flex items-center gap-1 text-sm text-[var(--deny)]">
                           <Trash2 className="size-3.5" /> Revoke

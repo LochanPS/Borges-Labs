@@ -5,14 +5,16 @@ import { Card, CardBody, CardHeader, CardTitle, Badge, Table, Td, Th } from "@/c
 import { PolicyEditor } from "@/components/policy-editor";
 import { getPolicy, listPolicyVersions } from "@/lib/api";
 import { publishPolicyAction, rollbackPolicyAction } from "@/lib/actions";
+import { canManage, currentIdentity } from "@/lib/identity";
 import { formatTime, shortId } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
 export default async function PolicyDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const [policy, versions] = await Promise.all([getPolicy(id), listPolicyVersions(id)]);
+  const [policy, versions, identity] = await Promise.all([getPolicy(id), listPolicyVersions(id), currentIdentity()]);
   if (!policy) notFound();
+  const manage = canManage(identity.role);
 
   return (
     <div className="space-y-6">
@@ -27,16 +29,18 @@ export default async function PolicyDetailPage({ params }: { params: Promise<{ i
             {policy.status}
           </Badge>
         </div>
-        <form action={publishPolicyAction.bind(null, policy.id)}>
-          <button className="inline-flex items-center gap-2 h-9 rounded-md bg-[var(--accent)] text-[var(--accent-fg)] px-4 text-sm font-medium">
-            <Rocket className="size-4" /> Validate &amp; publish
-          </button>
-        </form>
+        {manage && (
+          <form action={publishPolicyAction.bind(null, policy.id)}>
+            <button className="inline-flex items-center gap-2 h-9 rounded-md bg-[var(--accent)] text-[var(--accent-fg)] px-4 text-sm font-medium">
+              <Rocket className="size-4" /> Validate &amp; publish
+            </button>
+          </form>
+        )}
       </div>
 
       <Card>
         <CardHeader><CardTitle>Working copy</CardTitle></CardHeader>
-        <CardBody><PolicyEditor policy={policy} /></CardBody>
+        <CardBody><PolicyEditor policy={policy} canManage={manage} /></CardBody>
       </Card>
 
       <Card>
@@ -65,7 +69,7 @@ export default async function PolicyDetailPage({ params }: { params: Promise<{ i
                     <Td className="mono text-xs text-[var(--muted)]">{formatTime(v.published_at)}</Td>
                     <Td className="mono text-xs text-[var(--muted)]">{v.signature.algorithm} · {shortId(v.signature.key_id, 10)}</Td>
                     <Td>
-                      {!isActive && (
+                      {!isActive && manage && (
                         <form action={rollbackPolicyAction.bind(null, policy.id, v.version_hash)}>
                           <button className="inline-flex items-center gap-1 text-sm text-[var(--accent)]">
                             <RotateCcw className="size-3.5" /> Roll back

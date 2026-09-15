@@ -3,6 +3,19 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import * as api from "./api";
 import type { CreatedApiKey, Rule } from "./contracts";
+import { canManage, currentIdentity } from "./identity";
+
+/** Returns an error string when the caller lacks the admin role, else null. */
+async function denyIfNotManager(): Promise<string | null> {
+  const id = await currentIdentity();
+  return canManage(id.role) ? null : `Requires an admin role (you are ${id.role}).`;
+}
+
+/** Throw for void form actions that mutate; UI hides these for non-admins too. */
+async function assertManager(): Promise<void> {
+  const err = await denyIfNotManager();
+  if (err) throw new Error(err);
+}
 
 function parseRules(json: string): Rule[] {
   const parsed = JSON.parse(json);
@@ -15,6 +28,8 @@ export async function savePolicyAction(
   _prev: { error?: string; ok?: boolean } | null,
   formData: FormData,
 ): Promise<{ error?: string; ok?: boolean }> {
+  const denied = await denyIfNotManager();
+  if (denied) return { error: denied };
   try {
     const name = String(formData.get("name") ?? "").trim();
     const agents = String(formData.get("agents") ?? "")
@@ -35,6 +50,8 @@ export async function createPolicyAction(
   _prev: { error?: string } | null,
   formData: FormData,
 ): Promise<{ error?: string }> {
+  const denied = await denyIfNotManager();
+  if (denied) return { error: denied };
   let newId: string;
   try {
     const name = String(formData.get("name") ?? "").trim();
@@ -54,12 +71,14 @@ export async function createPolicyAction(
 }
 
 export async function publishPolicyAction(id: string): Promise<void> {
+  await assertManager();
   await api.publishPolicy(id);
   revalidatePath(`/policies/${id}`);
   revalidatePath("/");
 }
 
 export async function rollbackPolicyAction(id: string, versionHash: string): Promise<void> {
+  await assertManager();
   await api.rollbackPolicy(id, versionHash);
   revalidatePath(`/policies/${id}`);
 }
@@ -68,6 +87,8 @@ export async function createKeyAction(
   _prev: { key?: CreatedApiKey; error?: string } | null,
   formData: FormData,
 ): Promise<{ key?: CreatedApiKey; error?: string }> {
+  const denied = await denyIfNotManager();
+  if (denied) return { error: denied };
   try {
     const env = (String(formData.get("env")) === "live" ? "live" : "test") as "live" | "test";
     const shadow = formData.get("shadow") === "on";
@@ -80,8 +101,16 @@ export async function createKeyAction(
 }
 
 export async function revokeKeyAction(id: string): Promise<void> {
+  await assertManager();
   await api.revokeKey(id);
   revalidatePath("/keys");
+}
+
+/** Dev-only: switch the simulated role (RBAC demo when Clerk is not configured). */
+export async function setDevRoleAction(role: string): Promise<void> {
+  const jar = await import("next/headers").then((m) => m.cookies());
+  (await jar).set("ti-dev-role", role, { path: "/", httpOnly: false, sameSite: "lax" });
+  revalidatePath("/");
 }
 
 export async function playgroundAction(

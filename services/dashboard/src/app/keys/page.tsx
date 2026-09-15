@@ -1,10 +1,12 @@
 import { KeyManager } from "@/components/key-manager";
 import { listKeys } from "@/lib/api";
+import { canManage, currentIdentity } from "@/lib/identity";
 
 export const dynamic = "force-dynamic";
 
 export default async function KeysPage() {
-  const keys = await listKeys();
+  const [keys, identity] = await Promise.all([listKeys(), currentIdentity()]);
+  const manage = canManage(identity.role);
   return (
     <div className="space-y-6">
       <div>
@@ -14,7 +16,7 @@ export default async function KeysPage() {
           shown once at creation; only its hash is stored.
         </p>
       </div>
-      <KeyManager keys={keys} />
+      <KeyManager keys={keys} canManage={manage} />
     </div>
   );
 }

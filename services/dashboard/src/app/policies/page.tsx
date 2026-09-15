@@ -2,12 +2,14 @@ import Link from "next/link";
 import { Plus } from "lucide-react";
 import { Card, CardBody, Badge, Table, Td, Th } from "@/components/ui";
 import { listPolicies } from "@/lib/api";
+import { canManage, currentIdentity } from "@/lib/identity";
 import { formatTime, shortId } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
 export default async function PoliciesPage() {
-  const policies = await listPolicies();
+  const [policies, identity] = await Promise.all([listPolicies(), currentIdentity()]);
+  const manage = canManage(identity.role);
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -15,12 +17,14 @@ export default async function PoliciesPage() {
           <h1 className="text-2xl font-semibold">Policies</h1>
           <p className="text-[var(--muted)] text-sm">Author rules, publish an immutable signed version, roll back if needed.</p>
         </div>
-        <Link
-          href="/policies/new"
-          className="inline-flex items-center gap-2 h-9 rounded-md bg-[var(--accent)] text-[var(--accent-fg)] px-4 text-sm font-medium"
-        >
-          <Plus className="size-4" /> New policy
-        </Link>
+        {manage && (
+          <Link
+            href="/policies/new"
+            className="inline-flex items-center gap-2 h-9 rounded-md bg-[var(--accent)] text-[var(--accent-fg)] px-4 text-sm font-medium"
+          >
+            <Plus className="size-4" /> New policy
+          </Link>
+        )}
       </div>
 
       <Card>
