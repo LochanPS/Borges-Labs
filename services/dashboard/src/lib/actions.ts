@@ -83,3 +83,25 @@ export async function revokeKeyAction(id: string): Promise<void> {
   await api.revokeKey(id);
   revalidatePath("/keys");
 }
+
+export async function playgroundAction(
+  _prev: unknown,
+  formData: FormData,
+): Promise<{ decision?: import("./contracts").Decision; jwks?: import("./contracts").Jwks; error?: string }> {
+  try {
+    const amount = String(formData.get("amount") ?? "").trim();
+    if (!/^-?(0|[1-9][0-9]*)(\.[0-9]+)?$/.test(amount)) {
+      return { error: "amount must be a decimal string (e.g. 1200.00)" };
+    }
+    const { decision, jwks } = await api.authorizeTest({
+      agent_id: String(formData.get("agent_id") ?? "procurement-agent-v2").trim() || "procurement-agent-v2",
+      action: String(formData.get("action") ?? "payment.create").trim() || "payment.create",
+      amount,
+      currency: String(formData.get("currency") ?? "USD").trim() || "USD",
+      vendor: String(formData.get("vendor") ?? "acme-supplies").trim() || "acme-supplies",
+    });
+    return { decision, jwks };
+  } catch (e) {
+    return { error: (e as Error).message };
+  }
+}

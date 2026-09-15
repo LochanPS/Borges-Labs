@@ -162,6 +162,76 @@ export async function listKeys(): Promise<ApiKey[]> {
   }
 }
 
+// --- Playground: fire a test authorization ------------------------------- //
+
+export interface PlaygroundInput {
+  agent_id: string;
+  action: string;
+  amount: string;
+  currency: string;
+  vendor: string;
+}
+
+/**
+ * Run one authorization for the in-dashboard Playground. Live: signs + POSTs
+ * /v1/authorize. Mock: applies simple rules and returns a REAL Ed25519-signed decision
+ * (so the client-side Verify button genuinely validates). Returns the decision plus the
+ * JWKS to verify it against.
+ */
+export async function authorizeTest(
+  input: PlaygroundInput,
+): Promise<{ decision: Decision; jwks: Jwks }> {
+  const txn = {
+    agent_id: input.agent_id,
+    action: input.action,
+    amount: input.amount,
+    currency: input.currency,
+    target: { type: "vendor", id: input.vendor },
+    idempotency_key: `pg_${Date.now()}`,
+  };
+
+  if (liveBackend()) {
+    const decision = (await call("POST", "/v1/authorize", txn)) as Decision;
+    const jwks = await getPublicKeys();
+    return { decision, jwks };
+  }
+
+  // Mock: rules mirror the demo agent (allowlist, 5000 per-txn, 8000 review ceiling).
+  const amt = Number(input.amount);
+  const allowed = new Set(["acme-supplies", "globex"]);
+  let verdict: Decision["verdict"];
+  let detail: string;
+  let ruleType = "per_transaction_limit";
+  if (!allowed.has(input.vendor)) {
+    verdict = "DENY";
+    ruleType = "vendor_blocklist";
+    detail = `vendor '${input.vendor}' is not on the allowlist`;
+  } else if (amt > 8000) {
+    verdict = "DENY";
+    ruleType = "rolling_budget";
+    detail = `amount=${input.amount} exceeds the monthly budget`;
+  } else if (amt > 5000) {
+    verdict = "REVIEW";
+    detail = `amount=${input.amount} > per_transaction_limit=5000.00 ${input.currency}; step-up required`;
+  } else {
+    verdict = "APPROVE";
+    detail = `amount=${input.amount} <= per_transaction_limit=5000.00 ${input.currency}`;
+  }
+  const base = {
+    decision_id: `01HXYZPG${Date.now().toString(36).toUpperCase()}`.slice(0, 26),
+    verdict,
+    policy_version_hash: "polv_playground",
+    explanation: {
+      summary: detail,
+      matched_rules: [{ rule_id: "playground", type: ruleType, result: verdict === "APPROVE" ? "SATISFIED" : verdict, detail }],
+    },
+    obligations: verdict === "APPROVE" ? [{ type: "capture_within", detail: "capture after payment", params: { ttl_seconds: 120 } }] : [],
+    latency_ms: 3,
+    evaluated_at: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
+  } as unknown as Decision;
+  return { decision: signMockDecision(base), jwks: mockJwks };
+}
+
 // --- Writes (control plane) ---------------------------------------------- //
 
 export async function createPolicy(body: import("./contracts").PolicyWriteRequest): Promise<Policy> {
