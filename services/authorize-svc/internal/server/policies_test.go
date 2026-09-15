@@ -74,6 +74,7 @@ func newCPHarness(t *testing.T) *cpHarness {
 		WithControlPlane(svc, provider, sim).
 		WithBudget(reserver).
 		WithKeyAdmin(keys, nil).
+		WithProvisioning(testProvisionToken).
 		WithIdempotency(idempotency.NewMem())
 
 	ts := httptest.NewServer(srv.Handler())

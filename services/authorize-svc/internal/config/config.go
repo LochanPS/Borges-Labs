@@ -87,6 +87,12 @@ type Config struct {
 	AuditRetentionDefault time.Duration
 	// AuditRetentionByTier overrides retention per caller tier.
 	AuditRetentionByTier map[string]time.Duration
+
+	// ProvisionToken is a platform-level shared secret that authorizes the org
+	// bootstrap endpoint (POST /v1/provision/keys), which mints a new org's first
+	// admin key. Empty => the endpoint is disabled (returns 404). Set it only where a
+	// trusted control surface (e.g. the dashboard's server) needs to onboard orgs.
+	ProvisionToken string
 }
 
 // RetentionFor resolves the audit retention window for a caller tier, falling back
@@ -111,6 +117,7 @@ func Load() Config {
 		PolicyFile:              env("AUTHZ_POLICY_FILE", ""),
 		IdempotencyTTL:          envDuration("AUTHZ_IDEMPOTENCY_TTL", 24*time.Hour),
 		ControlPlaneEnabled:     envBool("AUTHZ_CONTROL_PLANE_ENABLED", true),
+		ProvisionToken:          env("AUTHZ_PROVISION_TOKEN", ""),
 		BundleRefreshTTL:        envDuration("AUTHZ_BUNDLE_REFRESH_TTL", 5*time.Second),
 		BundleLoadTimeout:       envDuration("AUTHZ_BUNDLE_LOAD_TIMEOUT", 2*time.Second),
 		HoldTTL:                 envDuration("AUTHZ_HOLD_TTL", 15*time.Minute),

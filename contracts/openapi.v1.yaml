@@ -564,6 +564,32 @@ paths:
               schema: { $ref: "#/components/schemas/ApiKey" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /v1/provision/keys:
+    post:
+      tags: [control-plane]
+      operationId: provisionOrgKey
+      summary: Bootstrap a new org's first API key (platform-authorized).
+      description: |
+        Mints the FIRST key for an org, solving the onboarding chicken-and-egg (a new org
+        has no key to call POST /v1/keys with). Authorized by a PLATFORM shared secret in
+        `X-Provision-Token`, NOT an org API key — only a trusted control surface (e.g. the
+        dashboard backend) should call it. Mounted only when the server is configured with
+        a provision token. Returns the org's admin key, whose `secret` is shown once.
+      security:
+        - ProvisionToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProvisionKeyRequest" }
+      responses:
+        "201":
+          description: The new org's first key, including its one-time secret.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreatedApiKey" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
   /v1/keys/public:
     get:
       tags: [keys]
@@ -641,6 +667,14 @@ components:
         with `X-Nonce` and `X-Timestamp`. Verified constant-time; timestamp skew beyond the
         configured window and reused nonces are rejected. This authenticates the CALLER and is
         entirely separate from the Ed25519 signature on the returned Decision.
+    ProvisionToken:
+      type: apiKey
+      in: header
+      name: X-Provision-Token
+      description: |
+        Platform-level shared secret authorizing org bootstrap (POST /v1/provision/keys).
+        NOT an org API key — held only by a trusted control surface (e.g. the dashboard
+        backend). Compared constant-time; the endpoint is unmounted unless configured.
   parameters:
     ApiKey:
       name: X-Api-Key
@@ -746,6 +780,25 @@ components:
           type: string
           enum: [live, test]
           description: Key environment; sets the azn_live_ / azn_test_ prefix.
+        tier:
+          type: string
+          description: Rate-limit/quota tier. Defaults to "default".
+        shadow:
+          type: boolean
+          description: Advisory (log-only) key. Defaults to true (advisory-first, A#5).
+    ProvisionKeyRequest:
+      type: object
+      description: Body for POST /v1/provision/keys. Creates a new org's first key.
+      additionalProperties: false
+      required: [org_id, env]
+      properties:
+        org_id:
+          type: string
+          minLength: 1
+          description: The org to bootstrap. This is the only place org id comes from the body.
+        env:
+          type: string
+          enum: [live, test]
         tier:
           type: string
           description: Rate-limit/quota tier. Defaults to "default".

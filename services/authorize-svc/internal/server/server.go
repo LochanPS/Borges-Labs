@@ -89,6 +89,10 @@ type Server struct {
 	keyAdmin           auth.KeyAdmin
 	keyCacheInvalidate keyCacheInvalidate
 
+	// provisionToken, when non-empty, mounts POST /v1/provision/keys (org bootstrap),
+	// authorized by this platform-level shared secret rather than an org API key.
+	provisionToken string
+
 	// metrics records operational signals exposed at GET /metrics (TRD §18). Always set.
 	metrics *metrics.Metrics
 }
@@ -178,6 +182,11 @@ func (s *Server) Handler() http.Handler {
 		km := func(h http.HandlerFunc) http.Handler { return s.authenticate(s.rateLimit(h)) }
 		mux.Handle("/v1/keys", km(s.handleKeys))
 		mux.Handle("/v1/keys/{id}/revoke", s.method(http.MethodPost, km(s.handleRevokeKey).ServeHTTP))
+	}
+	// Org bootstrap (M1): mint a new org's first key, authorized by a platform token
+	// (not an org key). Mounted only when a provision token is configured.
+	if s.provisionToken != "" && s.keyAdmin != nil {
+		mux.HandleFunc("/v1/provision/keys", s.method(http.MethodPost, s.handleProvisionKey))
 	}
 	mux.HandleFunc("/v1/keys/public", s.method(http.MethodGet, s.handleKeysPublic))
 	mux.HandleFunc("/v1/health", s.method(http.MethodGet, s.handleHealth))

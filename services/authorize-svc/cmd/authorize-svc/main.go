@@ -245,6 +245,12 @@ func main() {
 	// API-key management (control plane): Postgres is the source of truth; revoking a
 	// key evicts the hot-path cache so it takes effect immediately (TRD §11).
 	srv = srv.WithKeyAdmin(pgKeyStore, keyCache.Invalidate)
+	// Org bootstrap (M1): POST /v1/provision/keys, gated by a platform token. Only
+	// mounted when AUTHZ_PROVISION_TOKEN is set.
+	if cfg.ProvisionToken != "" {
+		srv = srv.WithProvisioning(cfg.ProvisionToken)
+		log.Info("org provisioning enabled (POST /v1/provision/keys)")
+	}
 	// Two-phase budget lifecycle (Task 3.1/3.2): capture/void settle the reservation
 	// the engine placed during authorize.
 	srv = srv.WithBudget(reserver)
